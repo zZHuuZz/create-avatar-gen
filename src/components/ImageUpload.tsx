@@ -12,6 +12,7 @@ interface Props {
 export function ImageUpload({ value, onChange, label = 'Portrait', compact = false }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [lightbox, setLightbox] = useState(false);
 
   function readFile(file: File) {
     if (!file.type.startsWith('image/')) return;
@@ -31,27 +32,55 @@ export function ImageUpload({ value, onChange, label = 'Portrait', compact = fal
 
   if (value) {
     return (
-      <div className="relative group">
-        <img
-          src={value}
-          alt="Portrait"
-          className={`w-full object-cover rounded-xl border border-(--color-border) ${compact ? 'max-h-48' : 'max-h-72'}`}
-          style={{ objectPosition: 'top' }}
-        />
-        <button
-          onClick={() => onChange('')}
-          className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white text-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          ×
-        </button>
-        <button
-          onClick={() => inputRef.current?.click()}
-          className="absolute bottom-2 right-2 text-xs px-2 py-1 rounded-lg bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          Change
-        </button>
-        <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])} />
-      </div>
+      <>
+        <div className="relative group">
+          <div
+            className={`w-full rounded-xl border border-(--color-border) bg-black/5 overflow-hidden flex items-center justify-center cursor-zoom-in ${compact ? 'max-h-48' : 'max-h-[480px]'}`}
+            onClick={() => setLightbox(true)}
+          >
+            <img
+              src={value}
+              alt={label}
+              className="w-full h-full object-contain"
+              style={{ maxHeight: compact ? '192px' : '480px' }}
+            />
+          </div>
+
+          <button
+            onClick={(e) => { e.stopPropagation(); onChange(''); }}
+            className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 text-white text-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            ×
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); inputRef.current?.click(); }}
+            className="absolute bottom-2 right-2 text-xs px-2 py-1 rounded-lg bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            Change
+          </button>
+          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && readFile(e.target.files[0])} />
+        </div>
+
+        {lightbox && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            onClick={() => setLightbox(false)}
+          >
+            <img
+              src={value}
+              alt={label}
+              className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={() => setLightbox(false)}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 text-white text-lg flex items-center justify-center hover:bg-white/20 transition-colors"
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </>
     );
   }
 

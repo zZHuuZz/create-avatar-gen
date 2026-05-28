@@ -1,15 +1,4 @@
 import OpenAI, { toFile } from 'openai';
-import type { PoseKey } from '@/types/pipeline';
-
-const POSE_PROMPTS: Record<PoseKey, string> = {
-  'hands-clasped':
-    'standing upright facing the camera, hands clasped together at waist level, professional portrait pose',
-  'arms-at-sides':
-    'standing naturally facing the camera with arms relaxed at sides, clean professional stance',
-  'arms-crossed':
-    'standing facing the camera with arms crossed at chest level, confident professional pose',
-  custom: 'pose as shown in the reference image',
-};
 
 function stripDataUrl(base64: string): string {
   return base64.replace(/^data:[^,]+,/, '');
@@ -17,38 +6,32 @@ function stripDataUrl(base64: string): string {
 
 export async function normalizePose(
   subjectBase64: string,
-  poseKey: PoseKey,
+  referenceImageBuffer: Buffer,
   apiKey: string,
-  options: {
-    customReferenceBase64?: string;
-    size?: '1024x1024' | '1024x1536' | '1536x1024';
-  } = {}
+  options: { size?: '1024x1024' | '1024x1536' | '1536x1024' } = {}
 ): Promise<string> {
   const client = new OpenAI({ apiKey });
 
-  const poseDescription = POSE_PROMPTS[poseKey];
   const prompt =
-    `Generate a new portrait of the exact same person. ` +
-    `Keep: identical face, same skin tone, same hair, same clothing and outfit, same background environment. ` +
-    `Change only: the body pose to ${poseDescription}. ` +
-    `Professional portrait photography quality. Preserve all personal features exactly.`;
+    `You are a photo editor. You will receive a portrait photo (the subject) and a reference pose photo. ` +
+    `Your output must be a single realistic photo of the SAME PERSON from the subject photo, shown waist-up, with their arms and hands in the EXACT pose shown in the reference photo. ` +
+    `\n\nRules:\n` +
+    `- Face, hair, skin tone, glasses, clothing, and background must be preserved exactly from the subject photo. Do not change the person's identity or appearance in any way.\n` +
+    `- Regardless of how the subject photo is framed (close-up, full body, half body, hands visible or not), always output a waist-up composition that clearly shows the arms and hands.\n` +
+    `- If the subject photo does not show the arms or hands, reconstruct them to match the reference pose using the same clothing style visible in the subject photo.\n` +
+    `- Copy the exact arm position, hand position, and gesture from the reference photo — do not guess or improvise the pose.\n` +
+    `- Do NOT enhance, beautify, smooth skin, adjust lighting, or change image quality. Preserve the original photo's realistic look exactly.\n` +
+    `- The output must look like a real unedited photo of this person, not AI-generated.`;
 
   const subjectBuffer = Buffer.from(stripDataUrl(subjectBase64), 'base64');
   const subjectFile = await toFile(subjectBuffer, 'subject.png', { type: 'image/png' });
-
-  const images: Awaited<ReturnType<typeof toFile>>[] = [subjectFile];
-
-  if (poseKey === 'custom' && options.customReferenceBase64) {
-    const refBuffer = Buffer.from(stripDataUrl(options.customReferenceBase64), 'base64');
-    const refFile = await toFile(refBuffer, 'reference.jpg', { type: 'image/jpeg' });
-    images.push(refFile);
-  }
+  const refFile = await toFile(referenceImageBuffer, 'reference.jpg', { type: 'image/jpeg' });
 
   const response = await (client.images as any).edit({
     model: 'gpt-image-1',
-    image: images.length === 1 ? images[0] : images,
+    image: [subjectFile, refFile],
     prompt,
-    size: options.size ?? '1024x1024',
+    size: options.size ?? '1024x1536',
     n: 1,
   });
 

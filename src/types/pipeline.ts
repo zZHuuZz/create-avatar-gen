@@ -1,13 +1,3 @@
-export type PoseKey = 'hands-clasped' | 'arms-at-sides' | 'arms-crossed' | 'custom';
-
-export interface PoseOption {
-  key: PoseKey;
-  label: string;
-  description: string;
-  posePrompt: string;
-  emoji: string;
-}
-
 export type SceneStatus = 'pending' | 'submitting' | 'generating' | 'done' | 'error';
 
 export interface SceneResult {
@@ -31,14 +21,6 @@ export interface SceneConfig {
 }
 
 export type AppStep = 1 | 2 | 3;
-
-export interface NormalizePoseRequest {
-  imageBase64: string;
-  poseKey: PoseKey;
-  customReferenceBase64?: string;
-  apiKey: string;
-  size?: '1024x1024' | '1024x1536' | '1536x1024';
-}
 
 export interface GenerateVideoRequest {
   imageBase64: string;

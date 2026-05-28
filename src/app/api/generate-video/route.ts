@@ -55,6 +55,7 @@ export async function POST(request: Request) {
               guidanceScale: 10,
               seed: seed + scene.seedOffset,
               useTeacache: true,
+              endImageBase64: imageBase64,
             });
           } catch (err) {
             send({

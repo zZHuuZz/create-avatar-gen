@@ -1,5 +1,7 @@
 'use client';
 
+import { useState } from 'react';
+
 interface Props {
   original: string;
   generated: string;
@@ -8,27 +10,60 @@ interface Props {
   generating: boolean;
 }
 
+function LightboxImage({ src, alt, className, style }: { src: string; alt: string; className?: string; style?: React.CSSProperties }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        className={`${className} cursor-zoom-in`}
+        style={style}
+        onClick={() => setOpen(true)}
+      />
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          onClick={() => setOpen(false)}
+        >
+          <img
+            src={src}
+            alt={alt}
+            className="max-w-[90vw] max-h-[90vh] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setOpen(false)}
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/10 text-white text-lg flex items-center justify-center hover:bg-white/20 transition-colors"
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function GeneratedPreview({ original, generated, onRegenerate, onMakeVideo, generating }: Props) {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-(--color-secondary) uppercase tracking-wide">Original</span>
-          <img
+          <LightboxImage
             src={original}
             alt="Original portrait"
-            className="w-full rounded-xl border border-(--color-border) object-cover max-h-72"
-            style={{ objectPosition: 'top' }}
+            className="w-full rounded-xl border border-(--color-border) object-contain bg-black/5 max-h-72"
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-(--color-secondary) uppercase tracking-wide">Generated</span>
           <div className="relative">
-            <img
+            <LightboxImage
               src={generated}
               alt="Generated portrait"
-              className="w-full rounded-xl border border-(--color-primary) object-cover max-h-72"
-              style={{ objectPosition: 'top' }}
+              className="w-full rounded-xl border border-(--color-primary) object-contain bg-black/5 max-h-72"
             />
             <div className="absolute top-2 right-2 badge">
               ✓ AI

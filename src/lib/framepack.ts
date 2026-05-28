@@ -6,6 +6,7 @@ export interface FramePackJobConfig {
   guidanceScale: number;
   seed: number;
   useTeacache: boolean;
+  endImageBase64?: string;
 }
 
 function stripDataUrl(base64: string): string {
@@ -29,6 +30,11 @@ export async function submitJob(
   form.append('guidance_scale', String(config.guidanceScale));
   form.append('seed', String(config.seed));
   form.append('use_teacache', config.useTeacache ? 'true' : 'false');
+
+  if (config.endImageBase64) {
+    const endBuf = Buffer.from(stripDataUrl(config.endImageBase64), 'base64');
+    form.append('end_image', new Blob([endBuf], { type: 'image/png' }), 'end.png');
+  }
 
   const res = await fetch(`${url}/api/inference`, { method: 'POST', body: form });
   if (!res.ok) {

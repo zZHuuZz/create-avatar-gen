@@ -2,12 +2,11 @@
 
 import { useState } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
-import { PoseSelector } from '@/components/PoseSelector';
 import { GeneratedPreview } from '@/components/GeneratedPreview';
 import { VideoProgress } from '@/components/VideoProgress';
 import { VideoResult } from '@/components/VideoResult';
 import { ALL_SCENES, QUICK_SCENE } from '@/lib/scene-config';
-import type { AppStep, PoseKey, SceneResult, SSEEvent } from '@/types/pipeline';
+import type { AppStep, SceneResult, SSEEvent } from '@/types/pipeline';
 
 const STEPS = [
   { id: 1, label: 'Upload' },
@@ -20,8 +19,6 @@ export default function Home() {
 
   // Step 1 state
   const [portrait, setPortrait] = useState<string | null>(null);
-  const [pose, setPose] = useState<PoseKey>('hands-clasped');
-  const [customRef, setCustomRef] = useState<string | null>(null);
 
   // Step 2 state
   const [generated, setGenerated] = useState<string | null>(null);
@@ -44,8 +41,6 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageBase64: portrait,
-          poseKey: pose,
-          customReferenceBase64: customRef ?? undefined,
         }),
       });
 
@@ -72,8 +67,6 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageBase64: portrait,
-          poseKey: pose,
-          customReferenceBase64: customRef ?? undefined,
         }),
       });
 
@@ -216,15 +209,6 @@ export default function Home() {
             <>
               <Section title="Portrait">
                 <ImageUpload value={portrait} onChange={setPortrait} />
-              </Section>
-
-              <Section title="Target Pose">
-                <PoseSelector
-                  value={pose}
-                  customReferenceBase64={customRef}
-                  onChange={setPose}
-                  onCustomReference={setCustomRef}
-                />
               </Section>
 
               {normalizeError && (
