@@ -8,31 +8,39 @@ interface WordToken {
   end: number;
 }
 
-interface Marker {
-  start: number;
-  end: number;
-  word: string;
-  type: 'transition' | 'emphasis';
+// LLM only does one job: find connecting words (từ nối) in plain text.
+// No mention of videos, gestures, or any domain context.
+const SYSTEM_PROMPT = `Cho một danh sách các từ đánh số, hãy tìm tất cả các từ nối và quan hệ từ trong văn bản.
+
+Từ nối là các từ hoặc cụm từ dùng để liên kết, chuyển tiếp giữa các câu hoặc ý. Ví dụ: "tuy nhiên", "vì vậy", "nếu như", "mặc dù", "do đó", "bởi vì", "nhưng", "thế nhưng", "hơn nữa", "ngoài ra", "bên cạnh đó", "không chỉ vậy", "đầu tiên", "thứ nhất", "thứ hai", "cuối cùng", "tóm lại", "ví dụ như", "chẳng hạn", "đồng thời", "song song đó", "thậm chí".
+
+Trả về JSON với "matches" là mảng các mảng chỉ số. Mỗi mảng con là chỉ số các từ tạo thành một cụm từ nối.
+
+Ví dụ input: [{"i":0,"t":"Tôi"},{"i":1,"t":"giàu"},{"i":2,"t":"Vì"},{"i":3,"t":"vậy"},{"i":4,"t":"tôi"}]
+Ví dụ output: {"matches":[[2,3]]}
+
+Chỉ trả về JSON, không có gì khác.`;
+
+// Keyword lookup: determine scene key from the matched phrase text.
+// Classification is done in code — LLM only finds the words.
+const ENUMERATION_WORDS = new Set([
+  'thứ nhất', 'thứ hai', 'thứ ba', 'thứ tư', 'thứ năm',
+  'đầu tiên', 'cuối cùng', 'tiếp theo', 'kế tiếp',
+  'hơn nữa', 'ngoài ra', 'bên cạnh đó', 'không chỉ vậy',
+  'đồng thời', 'song song đó',
+]);
+
+const EMPHASIS_WORDS = new Set([
+  'ví dụ như', 'chẳng hạn', 'chẳng hạn như',
+  'thậm chí', 'đặc biệt', 'quan trọng', 'nhất là', 'chính là',
+]);
+
+function sceneKeyForPhrase(phrase: string): string {
+  const normalized = phrase.toLowerCase().trim();
+  if (ENUMERATION_WORDS.has(normalized)) return '1-hand';
+  if (EMPHASIS_WORDS.has(normalized)) return 'point-up';
+  return '2-hand'; // default: transition
 }
-
-const SYSTEM_PROMPT = `You analyze speech transcripts to identify specific linguistic elements for gesture timing in a speaking video.
-
-Given word-level timestamps, find two types of words:
-
-1. "transition" — Conjunctions and connecting words (quan hệ từ, từ nối) that link or contrast ideas between sentences. Vietnamese examples: "tuy nhiên", "vì vậy", "nếu như", "mặc dù", "do đó", "bởi vì", "nhưng", "nhưng mà", "thế nhưng", "hơn nữa", "ngoài ra", "bên cạnh đó", "không chỉ", "mà còn", "thứ nhất", "thứ hai", "thứ ba", "đầu tiên", "cuối cùng", "nói chung", "tóm lại", "ví dụ như", "chẳng hạn như", "đồng thời", "song song đó". English equivalents: "however", "therefore", "moreover", "furthermore", "in addition", "on the other hand", "for example", "finally", "as a result".
-
-2. "emphasis" — Words that single out the most important point in a statement. Vietnamese examples: "đặc biệt", "quan trọng", "nhất là", "duy nhất", "chính là", "chỉ có", "thực ra", "thật ra", "rõ ràng", "đáng chú ý". English equivalents: "especially", "importantly", "above all", "in particular", "crucially".
-
-Rules:
-- Only mark words that clearly fit these categories — quality over quantity
-- A long speech should have at most 1 transition or emphasis marker per 10–15 seconds
-- Use the EXACT start/end timestamps from the word-level data provided
-- Prefer marking the FIRST word of a multi-word phrase (e.g. "tuy" in "tuy nhiên")
-
-Return ONLY valid JSON:
-{ "markers": [{ "start": 1.2, "end": 1.8, "word": "tuy nhiên", "type": "transition" }] }
-
-Return an empty markers array if no clear matches exist.`;
 
 export async function POST(request: Request) {
   const key = process.env.OPENAI_API_KEY;
@@ -77,29 +85,38 @@ export async function POST(request: Request) {
     return Response.json({ error: 'No words detected in audio' }, { status: 400 });
   }
 
-  // 2. LLM: find linguistic trigger words
-  let markers: Marker[] = [];
+  // 2. LLM: find connecting words. Only receives compact word list, returns index arrays.
+  const wordList = words.map((w, i) => ({ i, t: w.word }));
+
+  let matches: number[][] = [];
   try {
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Total audio duration: ${audioDuration.toFixed(2)}s\n\nTranscript: "${fullText}"\n\nWord timestamps:\n${JSON.stringify(words, null, 2)}`,
-        },
+        { role: 'user', content: JSON.stringify(wordList) },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.1,
+      temperature: 0,
     });
-
     const parsed = JSON.parse(completion.choices[0].message.content ?? '{}');
-    markers = (parsed.markers ?? []).filter(
-      (m: Marker) => typeof m.start === 'number' && typeof m.end === 'number' && m.start >= 0 && m.end <= audioDuration * 1.05
+    matches = (parsed.matches ?? []).filter(
+      (g: unknown) => Array.isArray(g) && (g as number[]).every((idx) => typeof idx === 'number' && idx >= 0 && idx < words.length)
     );
   } catch (err) {
     return Response.json({ error: `LLM failed: ${err instanceof Error ? err.message : err}` }, { status: 500 });
   }
+
+  // 3. Map index groups → timestamps + scene key in code (LLM never touches either)
+  const markers = matches.map((group) => {
+    const phrase = group.map((i) => words[i].word).join(' ');
+    return {
+      start: words[group[0]].start,
+      end: words[group[group.length - 1]].end,
+      word: phrase,
+      sceneKey: sceneKeyForPhrase(phrase),
+    };
+  }).sort((a, b) => a.start - b.start);
 
   return Response.json({ transcript: fullText, markers, audioDuration });
 }

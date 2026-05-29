@@ -111,12 +111,9 @@ export default function DevPage() {
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed');
 
       setTranscript(data.transcript ?? '');
-      const markers: { start: number; end: number; word: string; type: 'transition' | 'emphasis' }[] = data.markers ?? [];
+      const markers: { start: number; end: number; word: string; sceneKey: SceneKey }[] = data.markers ?? [];
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const noHandClipDur = getClipDur(0, videoDurations);
-
-      // Map marker type → gesture scene key
-      const markerSceneKey = (type: string): SceneKey => type === 'transition' ? '2-hand' : '1-hand';
 
       const out: SequenceItem[] = [];
       let cursor = 0;
@@ -130,12 +127,13 @@ export default function DevPage() {
             out.push({ sceneIndex: 0, label: SCENES[0].label, duration: noHandClipDur, key: 'no-hand' });
           }
         }
-        // Insert exactly 1 gesture clip at the marker
-        const key = markerSceneKey(marker.type);
+        // Insert exactly 1 gesture clip matched to the word type
+        const key = (marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand') as SceneKey;
         const sceneIdx = SCENE_KEY_MAP[key];
-        const clipDur = getClipDur(sceneIdx, videoDurations);
-        out.push({ sceneIndex: sceneIdx, label: SCENES.find((s) => s.index === sceneIdx)!.label, duration: clipDur, key });
-        cursor = marker.start + clipDur;
+        const scene = SCENES.find((s) => s.index === sceneIdx)!;
+        const gestureClipDur = getClipDur(sceneIdx, videoDurations);
+        out.push({ sceneIndex: sceneIdx, label: scene.label, duration: gestureClipDur, key });
+        cursor = marker.start + gestureClipDur;
       }
 
       // Fill remaining audio with no-hand clips

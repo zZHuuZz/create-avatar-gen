@@ -20,7 +20,7 @@ interface AnalysisMarker {
   start: number;
   end: number;
   word: string;
-  type: 'transition' | 'emphasis';
+  sceneKey: string;
 }
 
 const SCENE_KEY_MAP: Record<string, number> = {
@@ -153,12 +153,12 @@ export function VideoMerge({ scenes }: Props) {
             items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
           }
         }
-        // Insert exactly 1 gesture clip
-        const sceneIdx = marker.type === 'transition' ? SCENE_KEY_MAP['2-hand'] : SCENE_KEY_MAP['1-hand'];
-        const scene = sceneForIndex(sceneIdx);
-        if (scene) {
-          const clipDur = getClipDuration(scene.index);
-          items.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: clipDur, sceneIndex: scene.index });
+        // Insert exactly 1 gesture clip matched to the word type
+        const key = marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand';
+        const gestureScene = sceneForIndex(SCENE_KEY_MAP[key]);
+        if (gestureScene) {
+          const clipDur = getClipDuration(gestureScene.index);
+          items.push({ frampackUrl: gestureScene.frampackUrl!, jobId: gestureScene.jobId!, label: gestureScene.label, duration: clipDur, sceneIndex: gestureScene.index });
           cursor = marker.start + clipDur;
         }
       }
