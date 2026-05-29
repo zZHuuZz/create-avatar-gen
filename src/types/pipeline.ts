@@ -18,6 +18,7 @@ export interface SceneConfig {
   duration: number;
   seedOffset: number;
   hasArm: boolean;
+  useEndImage: boolean;
 }
 
 export type AppStep = 1 | 2 | 3;
@@ -27,6 +28,7 @@ export interface GenerateVideoRequest {
   frampackUrl: string;
   scenes: 'quick' | 'all';
   baseSeed: number;
+  sceneIndex?: number;
 }
 
 export type SSEEvent =

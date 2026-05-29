@@ -4,9 +4,10 @@ import type { SceneResult } from '@/types/pipeline';
 
 interface Props {
   scenes: SceneResult[];
+  onRegenerate: (sceneIndex: number) => void;
 }
 
-export function VideoResult({ scenes }: Props) {
+export function VideoResult({ scenes, onRegenerate }: Props) {
   const doneScenes = scenes.filter((s) => s.status === 'done' && s.jobId && s.frampackUrl);
 
   if (doneScenes.length === 0) return null;
@@ -53,12 +54,21 @@ export function VideoResult({ scenes }: Props) {
             />
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-(--color-secondary) truncate">{scene.label}</span>
-              <button
-                onClick={() => downloadScene(scene)}
-                className="btn-neumorphic text-xs py-1 px-2.5 shrink-0"
-              >
-                ↓ MP4
-              </button>
+              <div className="flex gap-1.5 shrink-0">
+                <button
+                  onClick={() => onRegenerate(scene.index)}
+                  className="btn-neumorphic text-xs py-1 px-2.5"
+                  title="Regenerate this scene"
+                >
+                  ↺
+                </button>
+                <button
+                  onClick={() => downloadScene(scene)}
+                  className="btn-neumorphic text-xs py-1 px-2.5"
+                >
+                  ↓ MP4
+                </button>
+              </div>
             </div>
           </div>
         ))}

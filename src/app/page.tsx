@@ -5,6 +5,7 @@ import { ImageUpload } from '@/components/ImageUpload';
 import { GeneratedPreview } from '@/components/GeneratedPreview';
 import { VideoProgress } from '@/components/VideoProgress';
 import { VideoResult } from '@/components/VideoResult';
+import { VideoMerge } from '@/components/VideoMerge';
 import { ALL_SCENES, QUICK_SCENE } from '@/lib/scene-config';
 import type { AppStep, SceneResult, SSEEvent } from '@/types/pipeline';
 
@@ -157,6 +158,48 @@ export default function Home() {
     });
   }
 
+  async function handleRegenerateScene(sceneIndex: number) {
+    if (!generated) return;
+    const baseSeed = Math.floor(Math.random() * 1_000_000);
+
+    setScenes((prev) =>
+      prev.map((s) => s.index === sceneIndex ? { ...s, status: 'submitting', progress: 0 } : s)
+    );
+
+    try {
+      const res = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: generated, scenes: sceneMode, baseSeed, sceneIndex }),
+      });
+
+      if (!res.ok || !res.body) throw new Error('Failed to start regeneration');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let event: SSEEvent;
+          try { event = JSON.parse(line.slice(6)); } catch { continue; }
+          handleSSEEvent(event);
+        }
+      }
+    } catch (err) {
+      console.error('Regenerate scene error:', err);
+      setScenes((prev) =>
+        prev.map((s) => s.index === sceneIndex ? { ...s, status: 'error', error: String(err) } : s)
+      );
+    }
+  }
+
   function reset() {
     setStep(1);
     setGenerated(null);
@@ -292,7 +335,13 @@ export default function Home() {
 
               {scenes.some((s) => s.status === 'done') && (
                 <Section title="Results">
-                  <VideoResult scenes={scenes} />
+                  <VideoResult scenes={scenes} onRegenerate={handleRegenerateScene} />
+                </Section>
+              )}
+
+              {scenes.some((s) => s.status === 'done') && (
+                <Section title="Merge for Lipsync">
+                  <VideoMerge scenes={scenes} />
                 </Section>
               )}
 

@@ -13,20 +13,22 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { imageBase64, frampackUrl: bodyFrampackUrl, scenes, baseSeed } = body;
+  const { imageBase64, frampackUrl: bodyFrampackUrl, scenes, baseSeed, sceneIndex } = body;
   const url = bodyFrampackUrl || process.env.FRAMEPACK_API_URL;
 
   if (!imageBase64 || !url) {
     return Response.json({ error: 'imageBase64 and frampackUrl are required' }, { status: 400 });
   }
-  if (!url) return Response.json({ error: 'FramePack URL is required' }, { status: 400 });
 
-  const scenesToRun = scenes === 'all' ? ALL_SCENES : [QUICK_SCENE];
+  let scenesToRun = scenes === 'all' ? ALL_SCENES : [QUICK_SCENE];
+  if (sceneIndex !== undefined) {
+    const single = ALL_SCENES.find((s) => s.index === sceneIndex);
+    if (single) scenesToRun = [single];
+  }
+
   const seed = baseSeed ?? Math.floor(Math.random() * 1_000_000);
-
   const encoder = new TextEncoder();
   const abortController = new AbortController();
-
   request.signal.addEventListener('abort', () => abortController.abort());
 
   const stream = new ReadableStream({
@@ -52,10 +54,10 @@ export async function POST(request: Request) {
               negativePrompt: scene.negativePrompt,
               duration: scene.duration,
               steps: 25,
-              guidanceScale: 10,
+              guidanceScale: scene.hasArm ? 15 : 10,
               seed: seed + scene.seedOffset,
               useTeacache: true,
-              endImageBase64: imageBase64,
+              endImageBase64: scene.useEndImage ? imageBase64 : undefined,
             });
           } catch (err) {
             send({
