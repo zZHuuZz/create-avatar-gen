@@ -8,34 +8,31 @@ interface WordToken {
   end: number;
 }
 
-interface Segment {
+interface Marker {
   start: number;
   end: number;
-  text: string;
-  scene: 'no-hand' | '1-hand' | '2-hand' | 'point-up';
+  word: string;
+  type: 'transition' | 'emphasis';
 }
 
-const SYSTEM_PROMPT = `You analyze speech transcripts to assign natural hand gestures to a speaking video.
+const SYSTEM_PROMPT = `You analyze speech transcripts to identify specific linguistic elements for gesture timing in a speaking video.
 
-You receive word-level timestamps from a transcription. Segment the speech into natural units (sentences or clauses) and assign one gesture per segment.
+Given word-level timestamps, find two types of words:
 
-Available gestures:
-- "no-hand": Normal speech, no gesture. Use for introductions, transitions, filler phrases, or when building up to a point.
-- "1-hand": One hand rises briefly. Use for mild emphasis, making a subtle point, or mid-sentence stress on a single word/idea.
-- "2-hand": Both hands open outward. Use for strong emphasis, presenting a big idea, opening statements, or key concepts.
-- "point-up": Index finger points upward. Use for "number one", key takeaways, highlighting the single most important point in a section.
+1. "transition" — Conjunctions and connecting words (quan hệ từ, từ nối) that link or contrast ideas between sentences. Vietnamese examples: "tuy nhiên", "vì vậy", "nếu như", "mặc dù", "do đó", "bởi vì", "nhưng", "nhưng mà", "thế nhưng", "hơn nữa", "ngoài ra", "bên cạnh đó", "không chỉ", "mà còn", "thứ nhất", "thứ hai", "thứ ba", "đầu tiên", "cuối cùng", "nói chung", "tóm lại", "ví dụ như", "chẳng hạn như", "đồng thời", "song song đó". English equivalents: "however", "therefore", "moreover", "furthermore", "in addition", "on the other hand", "for example", "finally", "as a result".
 
-Guidelines:
-- Start with "no-hand" for the first segment unless it's a strong opener.
-- Gestures should feel earned — mostly "no-hand", with gestures appearing at natural emphasis moments.
-- Prefer gestures at the END of sentences or clauses, not mid-word.
-- Never use "point-up" more than once or twice in a full speech.
-- Vary gestures — avoid repeating the same gesture more than 2 times in a row.
+2. "emphasis" — Words that single out the most important point in a statement. Vietnamese examples: "đặc biệt", "quan trọng", "nhất là", "duy nhất", "chính là", "chỉ có", "thực ra", "thật ra", "rõ ràng", "đáng chú ý". English equivalents: "especially", "importantly", "above all", "in particular", "crucially".
 
-CRITICAL: Use ONLY the exact start/end timestamps from the word-level data provided. Do NOT invent or estimate timestamps. Each segment's "start" must equal the "start" of its first word, and "end" must equal the "end" of its last word. All segments combined must span the full audio duration given.
+Rules:
+- Only mark words that clearly fit these categories — quality over quantity
+- A long speech should have at most 1 transition or emphasis marker per 10–15 seconds
+- Use the EXACT start/end timestamps from the word-level data provided
+- Prefer marking the FIRST word of a multi-word phrase (e.g. "tuy" in "tuy nhiên")
 
-Return ONLY valid JSON in this exact shape:
-{ "segments": [{ "start": 0.0, "end": 3.2, "text": "...", "scene": "no-hand" }] }`;
+Return ONLY valid JSON:
+{ "markers": [{ "start": 1.2, "end": 1.8, "word": "tuy nhiên", "type": "transition" }] }
+
+Return an empty markers array if no clear matches exist.`;
 
 export async function POST(request: Request) {
   const key = process.env.OPENAI_API_KEY;
@@ -53,8 +50,10 @@ export async function POST(request: Request) {
 
   const client = new OpenAI({ apiKey: key });
 
+  // 1. Whisper STT with word timestamps
   let words: WordToken[];
   let fullText: string;
+  let audioDuration: number;
   try {
     const file = await toFile(
       Buffer.from(await audioFile.arrayBuffer()),
@@ -69,6 +68,7 @@ export async function POST(request: Request) {
     });
     words = transcription.words ?? [];
     fullText = transcription.text ?? '';
+    audioDuration = words.length ? words[words.length - 1].end : 0;
   } catch (err) {
     return Response.json({ error: `Whisper failed: ${err instanceof Error ? err.message : err}` }, { status: 500 });
   }
@@ -77,8 +77,8 @@ export async function POST(request: Request) {
     return Response.json({ error: 'No words detected in audio' }, { status: 400 });
   }
 
-  // 2. LLM segmentation
-  let segments: Segment[];
+  // 2. LLM: find linguistic trigger words
+  let markers: Marker[] = [];
   try {
     const completion = await client.chat.completions.create({
       model: 'gpt-4o-mini',
@@ -86,34 +86,20 @@ export async function POST(request: Request) {
         { role: 'system', content: SYSTEM_PROMPT },
         {
           role: 'user',
-          content: `Total audio duration: ${words[words.length - 1].end.toFixed(2)}s\n\nTranscript: "${fullText}"\n\nWord timestamps (use these exact values for start/end):\n${JSON.stringify(words, null, 2)}`,
+          content: `Total audio duration: ${audioDuration.toFixed(2)}s\n\nTranscript: "${fullText}"\n\nWord timestamps:\n${JSON.stringify(words, null, 2)}`,
         },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.3,
+      temperature: 0.1,
     });
 
     const parsed = JSON.parse(completion.choices[0].message.content ?? '{}');
-    segments = parsed.segments ?? [];
-
-    const audioEnd = words[words.length - 1].end;
-    const maxEnd = Math.max(...segments.map((s) => s.end), 0);
-    if (maxEnd > audioEnd * 1.05) {
-      const scale = audioEnd / maxEnd;
-      segments = segments.map((s) => ({
-        ...s,
-        start: parseFloat((s.start * scale).toFixed(2)),
-        end: parseFloat((s.end * scale).toFixed(2)),
-      }));
-    }
-    segments = segments.map((s) => ({
-      ...s,
-      start: Math.max(0, Math.min(s.start, audioEnd)),
-      end: Math.max(0, Math.min(s.end, audioEnd)),
-    }));
+    markers = (parsed.markers ?? []).filter(
+      (m: Marker) => typeof m.start === 'number' && typeof m.end === 'number' && m.start >= 0 && m.end <= audioDuration * 1.05
+    );
   } catch (err) {
     return Response.json({ error: `LLM failed: ${err instanceof Error ? err.message : err}` }, { status: 500 });
   }
 
-  return Response.json({ transcript: fullText, segments });
+  return Response.json({ transcript: fullText, markers, audioDuration });
 }

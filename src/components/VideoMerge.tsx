@@ -16,11 +16,11 @@ interface SequenceItem {
   sceneIndex: number;
 }
 
-interface AnalysisSegment {
+interface AnalysisMarker {
   start: number;
   end: number;
-  text: string;
-  scene: 'no-hand' | '1-hand' | '2-hand' | 'point-up';
+  word: string;
+  type: 'transition' | 'emphasis';
 }
 
 const SCENE_KEY_MAP: Record<string, number> = {
@@ -134,32 +134,41 @@ export function VideoMerge({ scenes }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed');
 
-      const segments: AnalysisSegment[] = data.segments ?? [];
+      const markers: AnalysisMarker[] = data.markers ?? [];
       setTranscript(data.transcript ?? '');
+      const totalAudioDur: number = data.audioDuration ?? audioDuration;
 
-      // Build sequence: no-hand fills speech, gestures appear as 1 clip sandwiched in speech
       const noHandScene = sceneForIndex(0);
       const noHandClipDur = getClipDuration(0);
-      const items: SequenceItem[] = [];
-      for (const seg of segments) {
-        const sceneIdx = SCENE_KEY_MAP[seg.scene] ?? 0;
-        const scene = sceneForIndex(sceneIdx);
-        if (!scene) continue;
-        const clipDur = getClipDuration(scene.index);
-        const speechDur = Math.max(seg.end - seg.start, 0.5);
 
-        if (seg.scene === 'no-hand') {
-          const loops = Math.max(1, Math.round(speechDur / noHandClipDur));
-          items.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: parseFloat((loops * noHandClipDur).toFixed(3)), sceneIndex: 0 });
-        } else {
-          // prefix: no-hand fills the speech up to the gesture moment
-          const prefixDur = speechDur - clipDur;
-          if (noHandScene && prefixDur >= noHandClipDur * 0.75) {
-            const loops = Math.max(1, Math.round(prefixDur / noHandClipDur));
-            items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: parseFloat((loops * noHandClipDur).toFixed(3)), sceneIndex: 0 });
+      const items: SequenceItem[] = [];
+      let cursor = 0;
+
+      for (const marker of markers) {
+        // Fill gap before this marker with no-hand clips
+        const gapDur = marker.start - cursor;
+        if (gapDur > 0 && noHandScene) {
+          const count = Math.max(1, Math.round(gapDur / noHandClipDur));
+          for (let i = 0; i < count; i++) {
+            items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
           }
-          // then exactly 1 gesture clip
+        }
+        // Insert exactly 1 gesture clip
+        const sceneIdx = marker.type === 'transition' ? SCENE_KEY_MAP['2-hand'] : SCENE_KEY_MAP['1-hand'];
+        const scene = sceneForIndex(sceneIdx);
+        if (scene) {
+          const clipDur = getClipDuration(scene.index);
           items.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: clipDur, sceneIndex: scene.index });
+          cursor = marker.start + clipDur;
+        }
+      }
+
+      // Fill remaining with no-hand
+      const remaining = totalAudioDur - cursor;
+      if (remaining > 0 && noHandScene) {
+        const count = Math.max(1, Math.round(remaining / noHandClipDur));
+        for (let i = 0; i < count; i++) {
+          items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
         }
       }
       setSequence(items);

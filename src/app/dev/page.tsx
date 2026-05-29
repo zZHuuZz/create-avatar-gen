@@ -111,23 +111,39 @@ export default function DevPage() {
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed');
 
       setTranscript(data.transcript ?? '');
-      const segments: { start: number; end: number; text: string; scene: SceneKey }[] = data.segments ?? [];
+      const markers: { start: number; end: number; word: string; type: 'transition' | 'emphasis' }[] = data.markers ?? [];
+      const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const noHandClipDur = getClipDur(0, videoDurations);
-      const out: SequenceItem[] = [];
-      for (const seg of segments) {
-        const sceneIdx = SCENE_KEY_MAP[seg.scene] ?? 0;
-        const speechDur = Math.max(seg.end - seg.start, 0.5);
-        const clipDur = getClipDur(sceneIdx, videoDurations);
 
-        if (seg.scene === 'no-hand') {
-          out.push({ sceneIndex: 0, label: SCENES[0].label, duration: snapToClip(speechDur, noHandClipDur), key: 'no-hand' });
-        } else {
-          // Speech portion before the gesture (if long enough), then exactly 1 gesture clip
-          const prefixDur = speechDur - clipDur;
-          if (prefixDur >= noHandClipDur * 0.75) {
-            out.push({ sceneIndex: 0, label: SCENES[0].label, duration: snapToClip(prefixDur, noHandClipDur), key: 'no-hand' });
+      // Map marker type → gesture scene key
+      const markerSceneKey = (type: string): SceneKey => type === 'transition' ? '2-hand' : '1-hand';
+
+      const out: SequenceItem[] = [];
+      let cursor = 0;
+
+      for (const marker of markers) {
+        // Fill gap before this marker with no-hand clips
+        const gapDur = marker.start - cursor;
+        if (gapDur > 0) {
+          const count = Math.max(1, Math.round(gapDur / noHandClipDur));
+          for (let i = 0; i < count; i++) {
+            out.push({ sceneIndex: 0, label: SCENES[0].label, duration: noHandClipDur, key: 'no-hand' });
           }
-          out.push({ sceneIndex: sceneIdx, label: SCENES.find((s) => s.index === sceneIdx)!.label, duration: clipDur, key: seg.scene });
+        }
+        // Insert exactly 1 gesture clip at the marker
+        const key = markerSceneKey(marker.type);
+        const sceneIdx = SCENE_KEY_MAP[key];
+        const clipDur = getClipDur(sceneIdx, videoDurations);
+        out.push({ sceneIndex: sceneIdx, label: SCENES.find((s) => s.index === sceneIdx)!.label, duration: clipDur, key });
+        cursor = marker.start + clipDur;
+      }
+
+      // Fill remaining audio with no-hand clips
+      const remaining = totalAudioDur - cursor;
+      if (remaining > 0) {
+        const count = Math.max(1, Math.round(remaining / noHandClipDur));
+        for (let i = 0; i < count; i++) {
+          out.push({ sceneIndex: 0, label: SCENES[0].label, duration: noHandClipDur, key: 'no-hand' });
         }
       }
       setSequence(out);
