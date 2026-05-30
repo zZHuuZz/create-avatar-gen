@@ -23,6 +23,49 @@ interface SequenceItem {
   key: SceneKey;
 }
 
+interface Marker {
+  start: number;
+  end: number;
+  word: string;
+  sceneKey: SceneKey;
+}
+
+const MARKER_COLORS: Record<SceneKey, { bg: string; text: string; border: string }> = {
+  'no-hand':  { bg: 'bg-gray-100',   text: 'text-gray-700',  border: 'border-gray-300' },
+  '1-hand':   { bg: 'bg-blue-100',   text: 'text-blue-800',  border: 'border-blue-300' },
+  '2-hand':   { bg: 'bg-green-100',  text: 'text-green-800', border: 'border-green-300' },
+  'point-up': { bg: 'bg-yellow-100', text: 'text-yellow-800',border: 'border-yellow-300' },
+};
+
+function HighlightedTranscript({ text, markers }: { text: string; markers: Marker[] }) {
+  type Seg = { type: 'text'; content: string } | { type: 'marker'; content: string; sceneKey: SceneKey };
+  const segs: Seg[] = [];
+  let rest = text;
+  for (const m of [...markers].sort((a, b) => a.start - b.start)) {
+    const idx = rest.indexOf(m.word);
+    if (idx === -1) continue;
+    if (idx > 0) segs.push({ type: 'text', content: rest.slice(0, idx) });
+    segs.push({ type: 'marker', content: m.word, sceneKey: m.sceneKey });
+    rest = rest.slice(idx + m.word.length);
+  }
+  if (rest) segs.push({ type: 'text', content: rest });
+
+  return (
+    <>
+      {segs.map((seg, i) => {
+        if (seg.type === 'text') return <span key={i}>{seg.content}</span>;
+        const c = MARKER_COLORS[seg.sceneKey];
+        return (
+          <mark key={i} title={seg.sceneKey}
+            className={`${c.bg} ${c.text} rounded px-0.5 font-semibold not-italic`}>
+            {seg.content}
+          </mark>
+        );
+      })}
+    </>
+  );
+}
+
 function fmt(s: number) { return s.toFixed(1) + 's'; }
 
 // Round speech duration to the nearest whole number of clip loops
@@ -46,6 +89,7 @@ export default function DevPage() {
   const [merging, setMerging] = useState(false);
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [markers, setMarkers] = useState<Marker[]>([]);
   const audioRef = useRef<HTMLInputElement>(null);
 
   function setVideo(i: number, file: File) {
@@ -60,6 +104,8 @@ export default function DevPage() {
     setAudioFile(file);
     setAudioDuration(null);
     setMergedUrl(null);
+    setMarkers([]);
+    setTranscript(null);
     const a = new Audio(URL.createObjectURL(file));
     a.onloadedmetadata = () => setAudioDuration(a.duration);
   }
@@ -111,7 +157,8 @@ export default function DevPage() {
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed');
 
       setTranscript(data.transcript ?? '');
-      const markers: { start: number; end: number; word: string; sceneKey: SceneKey }[] = data.markers ?? [];
+      const markers: Marker[] = data.markers ?? [];
+      setMarkers(markers);
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const noHandClipDur = getClipDur(0, videoDurations);
 
@@ -219,9 +266,37 @@ export default function DevPage() {
             )}
 
             {transcript && (
-              <div className="px-3 py-2.5 rounded-xl bg-(--color-muted) text-[11px] text-(--color-secondary) leading-relaxed">
-                <span className="font-medium text-(--color-foreground) block mb-1">Transcript</span>
-                {transcript}
+              <div className="flex flex-col gap-2">
+                <div className="px-3 py-2.5 rounded-xl bg-(--color-muted) text-[11px] text-(--color-secondary) leading-relaxed">
+                  <span className="font-medium text-(--color-foreground) block mb-1">Transcript</span>
+                  <HighlightedTranscript text={transcript} markers={markers} />
+                </div>
+
+                {markers.length > 0 && (
+                  <div className="px-3 py-2.5 rounded-xl border border-(--color-border) text-[11px]">
+                    <span className="font-medium text-(--color-foreground) block mb-2">
+                      Detected markers ({markers.length})
+                    </span>
+                    <div className="flex flex-col gap-1">
+                      {markers.map((m, i) => {
+                        const c = MARKER_COLORS[m.sceneKey];
+                        return (
+                          <div key={i} className={`flex items-center gap-2 px-2 py-1 rounded-lg border ${c.bg} ${c.border}`}>
+                            <span className={`font-semibold ${c.text} min-w-0 flex-1`}>"{m.word}"</span>
+                            <span className="text-(--color-secondary) shrink-0">{m.start.toFixed(2)}s – {m.end.toFixed(2)}s</span>
+                            <span className={`shrink-0 font-medium ${c.text}`}>{SCENES.find(s => s.key === m.sceneKey)?.label ?? m.sceneKey}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3 mt-2 pt-2 border-t border-(--color-border)">
+                      {(['2-hand','1-hand','point-up'] as const).map((k) => {
+                        const c = MARKER_COLORS[k]; const sc = SCENES.find(s => s.key === k)!;
+                        return <span key={k} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.bg} ${c.text}`}>{sc.label}</span>;
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
