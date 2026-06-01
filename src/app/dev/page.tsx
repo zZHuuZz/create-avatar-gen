@@ -29,6 +29,7 @@ interface Marker {
   end: number;
   word: string;
   sceneKey: SceneKey;
+  isListIntro?: boolean;
 }
 
 // Linguistic priority — based on discourse weight, not gesture type.
@@ -194,35 +195,33 @@ export default function DevPage() {
         const prevGestureDur = getClipDur(SCENE_KEY_MAP[prev.sceneKey], videoDurations);
         const prevAnchor = acc.length === 1 ? 0 : prev.start;
         if (curr.start < prevAnchor + prevGestureDur + noHandClipDur) {
-          if (getMarkerPriority(curr.word) > getMarkerPriority(prev.word)) {
-            acc[acc.length - 1] = curr;
-          }
+          const currWins = curr.isListIntro && !prev.isListIntro
+            ? true
+            : !curr.isListIntro && prev.isListIntro
+              ? false
+              : getMarkerPriority(curr.word) > getMarkerPriority(prev.word);
+          if (currWins) acc[acc.length - 1] = curr;
           return acc;
         }
         return [...acc, curr];
       }, []);
 
       // Step 2: Point-up rules.
-      // Used at most once, only at the start, only for structured listicle/how-to videos.
-      // Condition: ≥4 markers AND majority are 1-hand (enumeration-heavy format).
-      // All other point-up markers (from EMPHASIS_RE) are demoted to 1-hand.
-      const oneHandCount = resolvedMarkers.filter(m => m.sceneKey === '1-hand').length;
-      const usePointUp =
-        resolvedMarkers.length >= 4 &&
-        oneHandCount >= Math.ceil(resolvedMarkers.length / 2);
-
-      const finalMarkers: Marker[] = resolvedMarkers.map(m =>
-        m.sceneKey === 'point-up' ? { ...m, sceneKey: '1-hand' as SceneKey } : m
-      );
-      if (usePointUp && finalMarkers.length > 0) {
-        finalMarkers[0] = { ...finalMarkers[0], sceneKey: 'point-up' as SceneKey };
-      }
+      // List-intro markers (phrase followed by ":") keep point-up unconditionally.
+      // All other point-up markers are limited to 1 per video — first is kept, rest demoted to 1-hand.
+      let pointUpUsed = false;
+      const finalMarkers: Marker[] = resolvedMarkers.map(m => {
+        if (m.sceneKey !== 'point-up') return m;
+        if (m.isListIntro) return m;
+        if (!pointUpUsed) { pointUpUsed = true; return m; }
+        return { ...m, sceneKey: '1-hand' as SceneKey };
+      });
 
       // Step 3: Build sequence.
       // Rule: always start with special — no leading no-hand clips before first gesture.
       // GESTURE_LEAD: gesture clip starts this many seconds BEFORE the trigger word so the
       // hand is moving into position exactly as the mouth says the word.
-      const GESTURE_LEAD = 1.0;
+      const GESTURE_LEAD = 1.5;
       const out: SequenceItem[] = [];
       let cursor = 0;
 
