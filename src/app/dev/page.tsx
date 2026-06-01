@@ -21,6 +21,7 @@ interface SequenceItem {
   label: string;
   duration: number;
   key: SceneKey;
+  triggerWord?: string; // debug: which từ nối created this gesture clip
 }
 
 interface Marker {
@@ -28,6 +29,28 @@ interface Marker {
   end: number;
   word: string;
   sceneKey: SceneKey;
+}
+
+// Linguistic priority — based on discourse weight, not gesture type.
+// Tier 4: structural ordinals (main scaffolding)
+// Tier 3: major discourse transitions
+// Tier 2: flow connectors
+// Tier 1: examples / emphasis
+const MARKER_PRIORITY: Record<string, number> = {
+  'đầu tiên': 4, 'cuối cùng': 4,
+  'thứ nhất': 4, 'thứ hai': 4, 'thứ ba': 4, 'thứ tư': 4, 'thứ năm': 4,
+  'thứ sáu': 4, 'thứ bảy': 4,
+  'nhưng': 3, 'tuy nhiên': 3, 'thế nhưng': 3, 'vậy mà': 3,
+  'kết quả là': 3, 'thay vì': 3, 'mặc dù': 3, 'do đó': 3, 'vì vậy': 3,
+  'tiếp theo': 2, 'kế tiếp': 2, 'hơn nữa': 2, 'ngoài ra': 2,
+  'bên cạnh đó': 2, 'song song đó': 2, 'không chỉ vậy': 2, 'đồng thời': 2,
+  'ví dụ như': 1, 'ví dụ': 1, 'chẳng hạn như': 1, 'chẳng hạn': 1,
+  'thậm chí': 1, 'đặc biệt là': 1, 'nhất là': 1, 'quan trọng hơn': 1,
+};
+
+function getMarkerPriority(word: string): number {
+  const key = word.toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').trim();
+  return MARKER_PRIORITY[key] ?? 2;
 }
 
 const MARKER_COLORS: Record<SceneKey, { bg: string; text: string; border: string }> = {
@@ -162,33 +185,79 @@ export default function DevPage() {
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const noHandClipDur = getClipDur(0, videoDurations);
 
+      // Step 1: Resolve back-to-back specials — keep higher linguistic priority, drop lower.
+      // First marker is placed at position 0 (start-with-special), not at its audio timestamp,
+      // so use 0 as anchor to avoid falsely flagging the second marker as a conflict.
+      const resolvedMarkers = markers.reduce<Marker[]>((acc, curr) => {
+        if (!acc.length) return [curr];
+        const prev = acc[acc.length - 1];
+        const prevGestureDur = getClipDur(SCENE_KEY_MAP[prev.sceneKey], videoDurations);
+        const prevAnchor = acc.length === 1 ? 0 : prev.start;
+        if (curr.start < prevAnchor + prevGestureDur + noHandClipDur) {
+          if (getMarkerPriority(curr.word) > getMarkerPriority(prev.word)) {
+            acc[acc.length - 1] = curr;
+          }
+          return acc;
+        }
+        return [...acc, curr];
+      }, []);
+
+      // Step 2: Point-up rules.
+      // Used at most once, only at the start, only for structured listicle/how-to videos.
+      // Condition: ≥4 markers AND majority are 1-hand (enumeration-heavy format).
+      // All other point-up markers (from EMPHASIS_RE) are demoted to 1-hand.
+      const oneHandCount = resolvedMarkers.filter(m => m.sceneKey === '1-hand').length;
+      const usePointUp =
+        resolvedMarkers.length >= 4 &&
+        oneHandCount >= Math.ceil(resolvedMarkers.length / 2);
+
+      const finalMarkers: Marker[] = resolvedMarkers.map(m =>
+        m.sceneKey === 'point-up' ? { ...m, sceneKey: '1-hand' as SceneKey } : m
+      );
+      if (usePointUp && finalMarkers.length > 0) {
+        finalMarkers[0] = { ...finalMarkers[0], sceneKey: 'point-up' as SceneKey };
+      }
+
+      // Step 3: Build sequence.
+      // Rule: always start with special — no leading no-hand clips before first gesture.
+      // GESTURE_LEAD: gesture clip starts this many seconds BEFORE the trigger word so the
+      // hand is moving into position exactly as the mouth says the word.
+      const GESTURE_LEAD = 1.0;
       const out: SequenceItem[] = [];
       let cursor = 0;
 
-      for (const marker of markers) {
-        // Fill gap before this marker with no-hand clips
-        const gapDur = marker.start - cursor;
-        if (gapDur > 0) {
-          const count = Math.max(1, Math.round(gapDur / noHandClipDur));
-          for (let i = 0; i < count; i++) {
-            out.push({ sceneIndex: 0, label: SCENES[0].label, duration: noHandClipDur, key: 'no-hand' });
+      for (let mi = 0; mi < finalMarkers.length; mi++) {
+        const marker = finalMarkers[mi];
+        const gestureClipDur = getClipDur(SCENE_KEY_MAP[marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey as SceneKey : '2-hand'], videoDurations);
+        // For markers after the first, start the gesture GESTURE_LEAD seconds before the word.
+        // Clamp so we never start before the previous gesture ended.
+        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - GESTURE_LEAD);
+
+        if (mi > 0) {
+          // Fill gap before this gesture with no-hand clips, stretched to fill exactly.
+          const gapDur = gestureStart - cursor;
+          if (gapDur > 0) {
+            const count = Math.max(1, Math.round(gapDur / noHandClipDur));
+            const stretchedDur = parseFloat((gapDur / count).toFixed(3));
+            for (let i = 0; i < count; i++) {
+              out.push({ sceneIndex: 0, label: SCENES[0].label, duration: stretchedDur, key: 'no-hand' });
+            }
           }
         }
-        // Insert exactly 1 gesture clip matched to the word type
         const key = (marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand') as SceneKey;
         const sceneIdx = SCENE_KEY_MAP[key];
         const scene = SCENES.find((s) => s.index === sceneIdx)!;
-        const gestureClipDur = getClipDur(sceneIdx, videoDurations);
-        out.push({ sceneIndex: sceneIdx, label: scene.label, duration: gestureClipDur, key });
-        cursor = marker.start + gestureClipDur;
+        out.push({ sceneIndex: sceneIdx, label: scene.label, duration: gestureClipDur, key, triggerWord: marker.word });
+        cursor = gestureStart + gestureClipDur;
       }
 
-      // Fill remaining audio with no-hand clips
+      // Fill remaining audio with no-hand clips, stretched to fill exactly.
       const remaining = totalAudioDur - cursor;
       if (remaining > 0) {
         const count = Math.max(1, Math.round(remaining / noHandClipDur));
+        const stretchedDur = parseFloat((remaining / count).toFixed(3));
         for (let i = 0; i < count; i++) {
-          out.push({ sceneIndex: 0, label: SCENES[0].label, duration: noHandClipDur, key: 'no-hand' });
+          out.push({ sceneIndex: 0, label: SCENES[0].label, duration: stretchedDur, key: 'no-hand' });
         }
       }
       setSequence(out);
@@ -330,6 +399,7 @@ export default function DevPage() {
                       <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-(--color-border) ${sc?.color ?? ''}`}>
                         <span className="text-xs text-(--color-secondary) w-4 text-right">{i + 1}</span>
                         <span className="text-sm text-(--color-foreground) flex-1">{item.label}</span>
+                        {item.triggerWord && <span className="text-[10px] text-(--color-secondary) italic opacity-60">"{item.triggerWord}"</span>}
                         <span className="text-xs text-(--color-secondary)">{fmt(item.duration)}</span>
                         <div className="flex gap-0.5">
                           <button onClick={() => moveUp(i)} disabled={i === 0} className="text-xs w-5 h-5 flex items-center justify-center rounded hover:bg-white/60 disabled:opacity-30">↑</button>
