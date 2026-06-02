@@ -1,41 +1,65 @@
-import OpenAI, { toFile } from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 function stripDataUrl(base64: string): string {
   return base64.replace(/^data:[^,]+,/, '');
+}
+
+const MODEL = 'gemini-2.5-flash-image';
+
+export async function generatePoseImage(
+  subjectBase64: string,
+  posePrompt: string,
+  apiKey: string,
+  options: { size?: string } = {}
+): Promise<string> {
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as any,
+  });
+
+  const result = await model.generateContent([
+    { text: 'Portrait photo (the subject):' },
+    { inlineData: { data: stripDataUrl(subjectBase64), mimeType: 'image/png' } },
+    { text: posePrompt },
+  ]);
+
+  const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+  const img = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+  if (!img?.inlineData?.data) throw new Error('Gemini returned no image data');
+  return `data:${img.inlineData.mimeType};base64,${img.inlineData.data}`;
 }
 
 export async function normalizePose(
   subjectBase64: string,
   referenceImageBuffer: Buffer,
   apiKey: string,
-  options: { size?: '1024x1024' | '1024x1536' | '1536x1024' } = {}
+  options: { size?: string; poseHint?: string; referenceFileName?: string } = {}
 ): Promise<string> {
-  const client = new OpenAI({ apiKey });
-
-  const prompt =
-    `You are a photo editor. You will receive a portrait photo (the subject) and a reference pose photo. ` +
-    `Your output must be a single realistic photo of the SAME PERSON from the subject photo, shown waist-up, with their arms and hands in the EXACT pose shown in the reference photo. ` +
-    `\n\nRules:\n` +
-    `- Face, hair, skin tone, glasses, clothing, and background must be preserved exactly from the subject photo. Do not change the person's identity or appearance in any way.\n` +
-    `- Regardless of how the subject photo is framed (close-up, full body, half body, hands visible or not), always output a waist-up composition that clearly shows the arms and hands.\n` +
-    `- If the subject photo does not show the arms or hands, reconstruct them to match the reference pose using the same clothing style visible in the subject photo.\n` +
-    `- Copy the exact arm position, hand position, and gesture from the reference photo — do not guess or improvise the pose.\n` +
-    `- Do NOT enhance, beautify, smooth skin, adjust lighting, or change image quality. Preserve the original photo's realistic look exactly.\n` +
-    `- The output must look like a real unedited photo of this person, not AI-generated.`;
-
-  const subjectBuffer = Buffer.from(stripDataUrl(subjectBase64), 'base64');
-  const subjectFile = await toFile(subjectBuffer, 'subject.png', { type: 'image/png' });
-  const refFile = await toFile(referenceImageBuffer, 'reference.jpg', { type: 'image/jpeg' });
-
-  const response = await (client.images as any).edit({
-    model: 'gpt-image-1',
-    image: [subjectFile, refFile],
-    prompt,
-    size: options.size ?? '1024x1536',
-    n: 1,
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as any,
   });
 
-  const b64 = response.data[0].b64_json;
-  if (!b64) throw new Error('OpenAI returned no image data');
-  return `data:image/png;base64,${b64}`;
+  const subjectName = 'portrait.png';
+  const refName = options.referenceFileName ?? 'reference.jpg';
+  const hint = options.poseHint ? ` The target pose: ${options.poseHint}` : '';
+  const prompt =
+    `${subjectName} is the person to edit. ${refName} is the arm/hand pose to copy.\n` +
+    `Maintain the same background, clothing and facial features from ${subjectName}.\n` +
+    `ONLY change the hand and arm pose to imitate that of ${refName}.${hint}`;
+
+  const result = await model.generateContent([
+    { text: `${subjectName}:` },
+    { inlineData: { data: stripDataUrl(subjectBase64), mimeType: 'image/png' } },
+    { text: `${refName}:` },
+    { inlineData: { data: referenceImageBuffer.toString('base64'), mimeType: 'image/jpeg' } },
+    { text: prompt },
+  ]);
+
+  const parts = result.response.candidates?.[0]?.content?.parts ?? [];
+  const img = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
+  if (!img?.inlineData?.data) throw new Error('Gemini returned no image data');
+  return `data:${img.inlineData.mimeType};base64,${img.inlineData.data}`;
 }

@@ -43,7 +43,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // Build per-segment clips
+    // Build per-segment clips with deflicker applied to smooth AI-video temporal noise
     const segPaths: string[] = [];
     for (let i = 0; i < sequence.length; i++) {
       const { sceneIndex, duration } = sequence[i];
@@ -52,22 +52,41 @@ export async function POST(request: Request) {
         return Response.json({ error: `No video uploaded for scene ${sceneIndex}` }, { status: 400 });
       }
       const segPath = join(tmpDir, `seg_${i}.mp4`);
+      // deflicker smooths frame-to-frame brightness variance common in AI-generated video
       await execAsync(
-        `ffmpeg -y -stream_loop -1 -i "${srcPath}" -t ${duration} -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
+        `ffmpeg -y -stream_loop -1 -i "${srcPath}" -t ${duration} -vf "deflicker=size=3:mode=am" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
         { timeout: 60_000 }
       );
       segPaths.push(segPath);
     }
 
-    // Concat all segments
-    const concatPath = join(tmpDir, 'concat.txt');
-    await fs.writeFile(concatPath, segPaths.map(p => `file '${p}'`).join('\n'));
-
+    // Merge all segments with xfade crossfade between each pair of clips.
+    // xfade blends the last FADE_DUR seconds of clip N into the first FADE_DUR seconds
+    // of clip N+1, hiding both luminance jumps and pose discontinuities.
+    // offset formula: cumulative sum of (each clip's duration - FADE_DUR).
+    const FADE_DUR = 0.12; // ~3 frames at 25fps — long enough to hide the cut, short enough to not blur the gesture
     const videoPath = join(tmpDir, 'video.mp4');
-    await execAsync(
-      `ffmpeg -y -f concat -safe 0 -i "${concatPath}" -c copy "${videoPath}"`,
-      { timeout: 120_000 }
-    );
+
+    if (segPaths.length === 1) {
+      await fs.copyFile(segPaths[0], videoPath);
+    } else {
+      const inputs = segPaths.map(p => `-i "${p}"`).join(' ');
+      let filterComplex = '';
+      let cumOffset = 0;
+      for (let i = 0; i < segPaths.length - 1; i++) {
+        // Guard: if a clip is too short for a fade, skip xfade for that cut
+        const effectiveFade = Math.min(FADE_DUR, sequence[i].duration / 2, sequence[i + 1].duration / 2);
+        cumOffset += sequence[i].duration - effectiveFade;
+        const inLabel = i === 0 ? '[0:v]' : `[v${i}]`;
+        const outLabel = i === segPaths.length - 2 ? '[out]' : `[v${i + 1}]`;
+        filterComplex += `${inLabel}[${i + 1}:v]xfade=transition=fade:duration=${effectiveFade.toFixed(3)}:offset=${cumOffset.toFixed(3)}${outLabel}`;
+        if (i < segPaths.length - 2) filterComplex += ';';
+      }
+      await execAsync(
+        `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[out]" -c:v libx264 -pix_fmt yuv420p -an "${videoPath}"`,
+        { timeout: 120_000 }
+      );
+    }
 
     // Mux audio if provided
     const outputPath = join(tmpDir, 'merged.mp4');

@@ -1,0 +1,134 @@
+import fs from 'fs';
+import path from 'path';
+import { normalizePose, generatePoseImage } from '@/lib/openai-image';
+import { submitJob, pollJobSSE } from '@/lib/framepack';
+import { ALL_SCENES } from '@/lib/scene-config';
+import type { GeneratePosedVideoRequest, PosedSSEEvent, StageKey } from '@/types/pipeline';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 1800;
+
+export async function POST(request: Request) {
+  let body: GeneratePosedVideoRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const { imageBase64, poseImageBase64: preGeneratedPose, frampackUrl: bodyFrampackUrl, baseSeed, sceneIndex } = body;
+  const url = bodyFrampackUrl || process.env.FRAMEPACK_API_URL;
+  const openaiKey = process.env.GEMINI_API_KEY;
+
+  if (!imageBase64 || !url) {
+    return Response.json({ error: 'imageBase64 and frampackUrl are required' }, { status: 400 });
+  }
+  if (!openaiKey) {
+    return Response.json({ error: 'GEMINI_API_KEY is not set' }, { status: 500 });
+  }
+
+  const scene = ALL_SCENES.find((s) => s.index === sceneIndex);
+  if (!scene?.poseConfig) {
+    return Response.json({ error: `Scene ${sceneIndex} has no poseConfig` }, { status: 400 });
+  }
+
+  const { poseConfig } = scene;
+  const encoder = new TextEncoder();
+  const abortController = new AbortController();
+  request.signal.addEventListener('abort', () => abortController.abort());
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: PosedSSEEvent) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          // client disconnected
+        }
+      };
+
+      try {
+        // 1. Use pre-generated pose image if available, otherwise call GPT
+        let poseImageBase64: string;
+        if (preGeneratedPose) {
+          poseImageBase64 = preGeneratedPose;
+          send({ type: 'pose-done', poseImageBase64 });
+        } else {
+          send({ type: 'pose-generating' });
+          try {
+            if (poseConfig.referenceImageFile) {
+              const refPath = path.join(process.cwd(), 'public', 'poses', poseConfig.referenceImageFile);
+              const refBuffer = fs.readFileSync(refPath);
+              poseImageBase64 = await normalizePose(imageBase64, refBuffer, openaiKey, { poseHint: poseConfig.posePrompt, referenceFileName: poseConfig.referenceImageFile });
+            } else {
+              poseImageBase64 = await generatePoseImage(imageBase64, poseConfig.posePrompt, openaiKey);
+            }
+            send({ type: 'pose-done', poseImageBase64 });
+          } catch (err) {
+            send({ type: 'pose-error', error: err instanceof Error ? err.message : String(err) });
+            send({ type: 'all-done' });
+            controller.close();
+            return;
+          }
+        }
+
+        const seed = baseSeed ?? Math.floor(Math.random() * 1_000_000);
+
+        const stages: Array<{ key: StageKey; startImage: string; endImage: string; config: typeof poseConfig.stageInto }> = [
+          { key: 'into', startImage: imageBase64, endImage: poseImageBase64, config: poseConfig.stageInto },
+          { key: 'out', startImage: poseImageBase64, endImage: imageBase64, config: poseConfig.stageOut },
+        ];
+
+        for (const stage of stages) {
+          if (abortController.signal.aborted) break;
+
+          send({ type: 'stage-start', stage: stage.key });
+
+          let jobId: string;
+          try {
+            jobId = await submitJob(stage.startImage, url, {
+              prompt: stage.config.prompt,
+              negativePrompt: stage.config.negativePrompt,
+              duration: stage.config.duration,
+              steps: 25,
+              guidanceScale: 15,
+              seed: seed + sceneIndex * 100 + (stage.key === 'into' ? 0 : stage.key === 'hold' ? 1 : 2),
+              useTeacache: true,
+              endImageBase64: stage.endImage,
+            });
+          } catch (err) {
+            send({ type: 'stage-error', stage: stage.key, error: err instanceof Error ? err.message : String(err) });
+            continue;
+          }
+
+          try {
+            await pollJobSSE(
+              url,
+              jobId,
+              (pct) => send({ type: 'stage-progress', stage: stage.key, pct }),
+              abortController.signal
+            );
+            send({ type: 'stage-done', stage: stage.key, jobId, frampackUrl: url });
+          } catch (err) {
+            if (abortController.signal.aborted) break;
+            send({ type: 'stage-error', stage: stage.key, error: err instanceof Error ? err.message : String(err) });
+          }
+        }
+
+        send({ type: 'all-done' });
+      } catch (err) {
+        send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}

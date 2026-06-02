@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import type { SceneResult } from '@/types/pipeline';
+import type { PosedSceneResult, SceneResult, StageKey } from '@/types/pipeline';
 import { ALL_SCENES } from '@/lib/scene-config';
 
 interface Props {
   scenes: SceneResult[];
+  posedScenes: PosedSceneResult[];
 }
 
 interface SequenceItem {
@@ -30,18 +31,17 @@ const SCENE_KEY_MAP: Record<string, number> = {
   'point-up': 3,
 };
 
-const SCENE_LABELS: Record<string, string> = {
-  'no-hand': 'Chỉ nói',
-  '1-hand': '1 tay',
-  '2-hand': '2 tay',
-  'point-up': 'Chỉ lên trời',
+const STAGE_LABELS: Record<StageKey, string> = {
+  into: 'A',
+  hold: 'B',
+  out: 'C',
 };
 
 function fmt(s: number) {
   return s.toFixed(1) + 's';
 }
 
-export function VideoMerge({ scenes }: Props) {
+export function VideoMerge({ scenes, posedScenes }: Props) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [sequence, setSequence] = useState<SequenceItem[]>([]);
@@ -56,6 +56,14 @@ export function VideoMerge({ scenes }: Props) {
 
   function getClipDuration(sceneIndex: number) {
     return ALL_SCENES.find((s) => s.index === sceneIndex)?.duration ?? 2.5;
+  }
+
+  function getStageDuration(sceneIndex: number, stageKey: StageKey): number {
+    const scene = ALL_SCENES.find((s) => s.index === sceneIndex);
+    if (!scene?.poseConfig) return 2;
+    return stageKey === 'into' ? scene.poseConfig.stageInto.duration
+      : stageKey === 'hold' ? scene.poseConfig.stageHold.duration
+      : scene.poseConfig.stageOut.duration;
   }
 
   function sceneForIndex(index: number): SceneResult | undefined {
@@ -82,6 +90,38 @@ export function VideoMerge({ scenes }: Props) {
         sceneIndex: scene.index,
       },
     ]);
+  }
+
+  function addPosedStage(ps: PosedSceneResult, stageKey: StageKey) {
+    const stage = ps.stages.find((s) => s.key === stageKey && s.status === 'done');
+    if (!stage?.jobId || !stage.frampackUrl) return;
+    setSequence((prev) => [
+      ...prev,
+      {
+        frampackUrl: stage.frampackUrl!,
+        jobId: stage.jobId!,
+        label: `${ps.label} ${STAGE_LABELS[stageKey]}`,
+        duration: getStageDuration(ps.sceneIndex, stageKey),
+        sceneIndex: ps.sceneIndex,
+      },
+    ]);
+  }
+
+  function addAllPosedStages(ps: PosedSceneResult) {
+    const keys: StageKey[] = ['into', 'hold', 'out'];
+    const items: SequenceItem[] = [];
+    for (const key of keys) {
+      const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
+      if (!stage?.jobId || !stage.frampackUrl) continue;
+      items.push({
+        frampackUrl: stage.frampackUrl!,
+        jobId: stage.jobId!,
+        label: `${ps.label} ${STAGE_LABELS[key]}`,
+        duration: getStageDuration(ps.sceneIndex, key),
+        sceneIndex: ps.sceneIndex,
+      });
+    }
+    setSequence((prev) => [...prev, ...items]);
   }
 
   function removeAt(pos: number) {
@@ -145,7 +185,6 @@ export function VideoMerge({ scenes }: Props) {
       let cursor = 0;
 
       for (const marker of markers) {
-        // Fill gap before this marker with no-hand clips
         const gapDur = marker.start - cursor;
         if (gapDur > 0 && noHandScene) {
           const count = Math.max(1, Math.round(gapDur / noHandClipDur));
@@ -153,17 +192,32 @@ export function VideoMerge({ scenes }: Props) {
             items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
           }
         }
-        // Insert exactly 1 gesture clip matched to the word type
-        const key = marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand';
-        const gestureScene = sceneForIndex(SCENE_KEY_MAP[key]);
-        if (gestureScene) {
-          const clipDur = getClipDuration(gestureScene.index);
-          items.push({ frampackUrl: gestureScene.frampackUrl!, jobId: gestureScene.jobId!, label: gestureScene.label, duration: clipDur, sceneIndex: gestureScene.index });
-          cursor = marker.start + clipDur;
+
+        const targetIndex = SCENE_KEY_MAP[marker.sceneKey] ?? 2;
+
+        // Use posed stages for scenes 1 and 3
+        if (targetIndex === 1 || targetIndex === 3) {
+          const ps = posedScenes.find((p) => p.sceneIndex === targetIndex);
+          if (ps) {
+            const keys: StageKey[] = ['into', 'hold', 'out'];
+            for (const key of keys) {
+              const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
+              if (!stage?.jobId) continue;
+              const dur = getStageDuration(targetIndex, key);
+              items.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[key]}`, duration: dur, sceneIndex: targetIndex });
+            }
+            cursor = marker.start + getStageDuration(targetIndex, 'into') + getStageDuration(targetIndex, 'hold') + getStageDuration(targetIndex, 'out');
+          }
+        } else {
+          const gestureScene = sceneForIndex(targetIndex);
+          if (gestureScene) {
+            const clipDur = getClipDuration(gestureScene.index);
+            items.push({ frampackUrl: gestureScene.frampackUrl!, jobId: gestureScene.jobId!, label: gestureScene.label, duration: clipDur, sceneIndex: gestureScene.index });
+            cursor = marker.start + clipDur;
+          }
         }
       }
 
-      // Fill remaining with no-hand
       const remaining = totalAudioDur - cursor;
       if (remaining > 0 && noHandScene) {
         const count = Math.max(1, Math.round(remaining / noHandClipDur));
@@ -219,7 +273,10 @@ export function VideoMerge({ scenes }: Props) {
     a.click();
   }
 
-  if (doneScenes.length === 0) return null;
+  const hasDoneRegular = doneScenes.length > 0;
+  const hasDonePosed = posedScenes.some((ps) => ps.stages.some((s) => s.status === 'done'));
+
+  if (!hasDoneRegular && !hasDonePosed) return null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -244,19 +301,13 @@ export function VideoMerge({ scenes }: Props) {
 
       {/* AI analyze */}
       {audioFile && audioDuration && (
-        <button
-          onClick={analyzeWithAI}
-          disabled={analyzing}
-          className="btn-neumorphic w-full py-2.5 text-sm"
-        >
+        <button onClick={analyzeWithAI} disabled={analyzing} className="btn-neumorphic w-full py-2.5 text-sm">
           {analyzing ? (
             <span className="flex items-center justify-center gap-2">
               <span className="w-3.5 h-3.5 border-2 border-(--color-secondary) border-t-transparent rounded-full" style={{ animation: 'spin 0.8s linear infinite' }} />
               Analyzing speech...
             </span>
-          ) : (
-            '✦ Analyze with AI → auto-assign gestures'
-          )}
+          ) : '✦ Analyze with AI → auto-assign gestures'}
         </button>
       )}
 
@@ -267,11 +318,11 @@ export function VideoMerge({ scenes }: Props) {
         </div>
       )}
 
-      {/* Manual scene chips */}
+      {/* Manual clip chips */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs font-medium text-(--color-secondary)">Add scenes manually</label>
-          <button onClick={autoFill} disabled={!audioDuration || doneScenes.length === 0}
+          <label className="text-xs font-medium text-(--color-secondary)">Add clips manually</label>
+          <button onClick={autoFill} disabled={!audioDuration || !hasDoneRegular}
             className="text-xs text-(--color-primary) hover:underline disabled:opacity-40 disabled:no-underline">
             Auto fill ↓
           </button>
@@ -283,6 +334,32 @@ export function VideoMerge({ scenes }: Props) {
               + {scene.label} <span className="text-(--color-secondary)">({fmt(getClipDuration(scene.index))})</span>
             </button>
           ))}
+          {posedScenes.map((ps) => {
+            const hasAny = ps.stages.some((s) => s.status === 'done');
+            if (!hasAny) return null;
+            const hasAll = ps.stages.filter((s) => s.status === 'done').length === 3;
+            return (
+              <div key={ps.sceneIndex} className="flex gap-1">
+                {hasAll && (
+                  <button onClick={() => addAllPosedStages(ps)}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-(--color-primary) bg-(--color-primary-light) hover:bg-(--color-primary) hover:text-white transition-all text-(--color-foreground)">
+                    + {ps.label} (A+B+C)
+                  </button>
+                )}
+                {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
+                  const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
+                  if (!stage) return null;
+                  return (
+                    <button key={key} onClick={() => addPosedStage(ps, key)}
+                      className="text-xs px-2 py-1.5 rounded-lg border border-(--color-border) hover:border-(--color-primary) hover:bg-(--color-primary-light) transition-all text-(--color-foreground)">
+                      {ps.label} {STAGE_LABELS[key]}
+                      <span className="text-(--color-secondary) ml-1">({fmt(getStageDuration(ps.sceneIndex, key))})</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -322,9 +399,7 @@ export function VideoMerge({ scenes }: Props) {
             <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full" style={{ animation: 'spin 0.8s linear infinite' }} />
             Merging...
           </span>
-        ) : (
-          'Merge for Lipsync →'
-        )}
+        ) : 'Merge for Lipsync →'}
       </button>
 
       {mergedUrl && (

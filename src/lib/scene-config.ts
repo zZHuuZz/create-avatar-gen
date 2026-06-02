@@ -3,6 +3,8 @@ import type { SceneConfig } from '@/types/pipeline';
 const BASE_NEGATIVE =
   'completely closed eyes, eyes shut, jerky, sudden movement, blurry, low quality, deformed, distorted, artifacts, morphing, camera shake, camera movement, zoom, dolly, pan, tilt, tracking shot, walking, stepping, leg movement, running, jumping, foot movement, laughing, smiling';
 
+const HAND_NEGATIVE = `deformed hands, extra fingers, missing fingers, malformed hands, ${BASE_NEGATIVE}`;
+
 export const ALL_SCENES: SceneConfig[] = [
   {
     index: 0,
@@ -19,12 +21,35 @@ export const ALL_SCENES: SceneConfig[] = [
     index: 1,
     label: '1 tay',
     prompt:
-      'A person is speaking to the camera. Their right hand rises and makes a single expressive gesture at chest level. Their left hand stays completely still at rest the entire time. Right arm moves, left arm does not move.',
-    negativePrompt: `both hands moving, two hands gesturing, left hand gesture, left arm moving, symmetric gesture, ${BASE_NEGATIVE}`,
-    duration: 4,
+      'A person is speaking to the camera. Primary motion: right hand rises to chest level making a single gentle gesture. Slow and controlled hand movement. Natural facial expressions with frequent eye blinking.',
+    negativePrompt: `left arm moving, both hands moving, two hands gesturing, symmetric gesture, rapid movement, ${BASE_NEGATIVE}`,
+    duration: 5,
     seedOffset: 10,
     hasArm: true,
     useEndImage: true,
+    poseConfig: {
+      referenceImageFile: 'reference-onehand.jpg',
+      posePrompt:
+        'Edit this portrait photo. The person raises their right hand to chest height with an open palm facing slightly forward, as if making a natural presentation gesture. Their left arm stays at rest at their side. Preserve the face, hair, clothing, and background exactly. Output must look like a real, unedited photo.',
+      stageInto: {
+        prompt:
+          'Person smoothly raises right hand from resting position up to chest level, making a gentle open-palm gesture. Slow, gradual, natural arm movement. Left arm stays completely still.',
+        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
+        duration: 2,
+      },
+      stageHold: {
+        prompt:
+          'Person speaking naturally to camera. Right hand held at chest level with open palm. Subtle head movement and natural blinking. Body and arms stay still.',
+        negativePrompt: `arms dropping, hands lowering, arm movement, ${HAND_NEGATIVE}`,
+        duration: 3,
+      },
+      stageOut: {
+        prompt:
+          'Person smoothly lowers right hand from chest level back down to rest at their side. Slow, gradual, natural arm movement.',
+        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
+        duration: 2,
+      },
+    },
   },
   {
     index: 2,
@@ -41,13 +66,37 @@ export const ALL_SCENES: SceneConfig[] = [
     index: 3,
     label: 'Chỉ lên trời',
     prompt:
-      'Person slowly raises right index finger and points upward. One hand only, holds the pointed finger up for the entire duration of the video. One hand only, index finger pointing straight up, arm stays raised and still. Natural facial expression.',
-    negativePrompt: `${BASE_NEGATIVE}`,
-    duration: 2,
+      'A person speaking naturally. Primary motion: right hand gently pointing the index finger straight upward to the sky. Slow, steady, and deliberate pointing gesture. High quality hand anatomy.',
+    negativePrompt: `multiple fingers pointing, waving, deformed hands, extra fingers, fast movement, hands lowering, ${BASE_NEGATIVE}`,
+    duration: 5,
     seedOffset: 30,
     hasArm: true,
-    useEndImage: false,
+    useEndImage: true,
+    poseConfig: {
+      referenceImageFile: 'reference-pointup.jpg',
+      posePrompt:
+        'Edit this portrait photo. The person raises their right arm upward with the right index finger pointing straight up toward the sky. All other fingers are naturally curled in. Their left arm stays at rest at their side. Preserve the face, hair, clothing, and background exactly. Output must look like a real, unedited photo.',
+      stageInto: {
+        prompt:
+          'Person smoothly raises right arm upward, extending index finger to point straight up at the sky. Slow, deliberate pointing motion. Left arm stays still at rest.',
+        negativePrompt: `sudden movement, multiple fingers pointing, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
+        duration: 2,
+      },
+      stageHold: {
+        prompt:
+          'Person speaking naturally to camera. Right arm raised high with index finger pointing straight up. Subtle head movement and natural blinking. Arm stays raised and completely still.',
+        negativePrompt: `arm dropping, hand lowering, arm movement, finger curling, ${HAND_NEGATIVE}`,
+        duration: 3,
+      },
+      stageOut: {
+        prompt:
+          'Person smoothly lowers right arm from pointing-up position back down to rest at their side. Slow, gradual, natural arm movement.',
+        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
+        duration: 2,
+      },
+    },
   },
 ];
 
-export const QUICK_SCENE = ALL_SCENES[1]; // 1 tay
+export const QUICK_SCENE = ALL_SCENES[0];
+export const POSED_SCENE_INDICES = new Set([1, 3]);

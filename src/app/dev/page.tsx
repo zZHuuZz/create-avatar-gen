@@ -2,7 +2,6 @@
 
 import { useState, useRef } from 'react';
 
-// defaultDur = expected clip length from FramePack; overridden once actual video is uploaded
 const SCENES = [
   { index: 0, key: 'no-hand',  label: 'Chỉ nói, không đưa tay', color: 'bg-gray-100',  defaultDur: 2.5 },
   { index: 1, key: '1-hand',   label: '1 tay',                  color: 'bg-blue-50',   defaultDur: 3.0 },
@@ -21,7 +20,7 @@ interface SequenceItem {
   label: string;
   duration: number;
   key: SceneKey;
-  triggerWord?: string; // debug: which từ nối created this gesture clip
+  triggerWord?: string;
 }
 
 interface Marker {
@@ -92,7 +91,6 @@ function HighlightedTranscript({ text, markers }: { text: string; markers: Marke
 
 function fmt(s: number) { return s.toFixed(1) + 's'; }
 
-// Round speech duration to the nearest whole number of clip loops
 function snapToClip(speechDur: number, clipDur: number): number {
   const loops = Math.max(1, Math.round(speechDur / clipDur));
   return parseFloat((loops * clipDur).toFixed(3));

@@ -1,27 +1,37 @@
 'use client';
 
 import { useState } from 'react';
+import { ALL_SCENES } from '@/lib/scene-config';
 
 interface Props {
   original: string;
   generated: string;
+  generatedPoses?: Record<number, string>;
   onRegenerate: () => void;
   onMakeVideo: () => void;
   generating: boolean;
 }
 
-function LightboxImage({ src, alt, className, style }: { src: string; alt: string; className?: string; style?: React.CSSProperties }) {
+function LightboxImage({ src, alt, label, badge }: { src: string; alt: string; label: string; badge?: string }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <>
-      <img
-        src={src}
-        alt={alt}
-        className={`${className} cursor-zoom-in`}
-        style={style}
-        onClick={() => setOpen(true)}
-      />
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-(--color-secondary) uppercase tracking-wide">{label}</span>
+      <div className="relative cursor-zoom-in" onClick={() => setOpen(true)}>
+        <img
+          src={src}
+          alt={alt}
+          className="w-full rounded-xl border border-(--color-border) object-contain bg-black/5 max-h-60"
+        />
+        {badge && (
+          <div className="absolute top-2 right-2 badge">{badge}</div>
+        )}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+          <span className="bg-black/50 text-white text-xs px-2 py-1 rounded-lg">Full screen</span>
+        </div>
+      </div>
+
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
@@ -41,36 +51,30 @@ function LightboxImage({ src, alt, className, style }: { src: string; alt: strin
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
-export function GeneratedPreview({ original, generated, onRegenerate, onMakeVideo, generating }: Props) {
+export function GeneratedPreview({ original, generated, generatedPoses, onRegenerate, onMakeVideo, generating }: Props) {
+  const poseEntries = generatedPoses
+    ? ALL_SCENES.filter((s) => s.poseConfig && generatedPoses[s.index])
+        .map((s) => ({ index: s.index, label: s.label, img: generatedPoses[s.index] }))
+    : [];
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-(--color-secondary) uppercase tracking-wide">Original</span>
-          <LightboxImage
-            src={original}
-            alt="Original portrait"
-            className="w-full rounded-xl border border-(--color-border) object-contain bg-black/5 max-h-72"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-(--color-secondary) uppercase tracking-wide">Generated</span>
-          <div className="relative">
-            <LightboxImage
-              src={generated}
-              alt="Generated portrait"
-              className="w-full rounded-xl border border-(--color-primary) object-contain bg-black/5 max-h-72"
-            />
-            <div className="absolute top-2 right-2 badge">
-              ✓ AI
-            </div>
-          </div>
-        </div>
+        <LightboxImage src={original} alt="Original portrait" label="Original" />
+        <LightboxImage src={generated} alt="Generated avatar" label="Generated" badge="✓ AI" />
       </div>
+
+      {poseEntries.length > 0 && (
+        <div className={`grid gap-3 ${poseEntries.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {poseEntries.map(({ index, label, img }) => (
+            <LightboxImage key={index} src={img} alt={label} label={label} badge="✓ Pose" />
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-2">
         <button
