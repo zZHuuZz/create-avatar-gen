@@ -32,7 +32,10 @@ export async function POST(request: Request) {
 
   try {
     // Step 1: generate main avatar — clasped hands pose from reference.jpg
-    const generated = await normalizePose(imageBase64, referenceImageBuffer, key, { size });
+    const generated = await normalizePose(imageBase64, referenceImageBuffer, key, {
+      size,
+      poseHint: 'Right hand gently holds left hand at waist level, fingers naturally interlocked — NOT a prayer or namaste pose. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
+    });
 
     // Step 2: generate each pose from the ORIGINAL portrait (not the generated avatar)
     // so poses don't inherit the clasped-hands from step 1

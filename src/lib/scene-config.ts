@@ -30,7 +30,7 @@ export const ALL_SCENES: SceneConfig[] = [
     poseConfig: {
       referenceImageFile: 'reference-onehand.jpg',
       posePrompt:
-        'Edit this portrait photo. The person raises their right hand to chest height with an open palm facing slightly forward, as if making a natural presentation gesture. Their left arm stays at rest at their side. Preserve the face, hair, clothing, and background exactly. Output must look like a real, unedited photo.',
+        'Right hand raised to chest height, open palm facing slightly forward. Left hand and left forearm stay at waist level, fully visible. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
       stageInto: {
         prompt:
           'Person smoothly raises right hand from resting position up to chest level, making a gentle open-palm gesture. Slow, gradual, natural arm movement. Left arm stays completely still.',
@@ -67,7 +67,7 @@ export const ALL_SCENES: SceneConfig[] = [
     label: 'Chỉ lên trời',
     prompt:
       'A person speaking naturally. Primary motion: right hand gently pointing the index finger straight upward to the sky. Slow, steady, and deliberate pointing gesture. High quality hand anatomy.',
-    negativePrompt: `multiple fingers pointing, waving, deformed hands, extra fingers, fast movement, hands lowering, ${BASE_NEGATIVE}`,
+    negativePrompt: `left arm raising, left arm moving, both arms raised, two arms up, multiple fingers pointing, waving, deformed hands, extra fingers, fast movement, ${BASE_NEGATIVE}`,
     duration: 5,
     seedOffset: 30,
     hasArm: true,
@@ -75,7 +75,7 @@ export const ALL_SCENES: SceneConfig[] = [
     poseConfig: {
       referenceImageFile: 'reference-pointup.jpg',
       posePrompt:
-        'Edit this portrait photo. The person raises their right arm upward with the right index finger pointing straight up toward the sky. All other fingers are naturally curled in. Their left arm stays at rest at their side. Preserve the face, hair, clothing, and background exactly. Output must look like a real, unedited photo.',
+        'Right arm raised, right index finger pointing straight up, all other fingers curled. Left arm bent at elbow, left hand resting at chest level — both arms must appear in the same frame. The output must be wide enough to show both arms fully. Never crop either hand or arm.',
       stageInto: {
         prompt:
           'Person smoothly raises right arm upward, extending index finger to point straight up at the sky. Slow, deliberate pointing motion. Left arm stays still at rest.',
