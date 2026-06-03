@@ -7,6 +7,8 @@ interface Props {
   result: PosedSceneResult;
   onMerge: (sceneIndex: number) => void;
   onRegenerate: (sceneIndex: number) => void;
+  onRemerge: (sceneIndex: number) => void;
+  onRegenerateStage: (sceneIndex: number, stageKey: StageKey) => void;
 }
 
 const STAGE_LABELS: Record<StageKey, string> = {
@@ -15,10 +17,15 @@ const STAGE_LABELS: Record<StageKey, string> = {
   out:  'C · Ra tư thế',
 };
 
-export function PosedSceneCard({ result, onMerge, onRegenerate }: Props) {
+export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onRegenerateStage }: Props) {
   const mergeTriggered = useRef(false);
 
-  const allStagesDone = result.stages.length === 2 && result.stages.every((s) => s.status === 'done');
+  const allStagesDone = result.stages.length === 3 && result.stages.every((s) => s.status === 'done');
+
+  // Reset the guard whenever stages are no longer all done (retry resets stages to pending)
+  useEffect(() => {
+    if (!allStagesDone) mergeTriggered.current = false;
+  }, [allStagesDone]);
 
   // Auto-trigger merge once all 3 stages are done
   useEffect(() => {
@@ -82,25 +89,34 @@ export function PosedSceneCard({ result, onMerge, onRegenerate }: Props) {
 
           {/* Stages A / B / C */}
           <div className="flex-1 flex flex-col gap-2 justify-center">
-            {(['into', 'out'] as StageKey[]).map((key) => {
+            {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
               const stage = result.stages.find((s) => s.key === key);
               const status = stage?.status ?? 'pending';
               return (
                 <div key={key} className="flex flex-col gap-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs text-(--color-foreground) font-medium">{STAGE_LABELS[key]}</span>
-                    <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
-                      status === 'done'       ? 'text-(--color-success) bg-emerald-50' :
-                      status === 'generating' ? 'text-(--color-primary) bg-(--color-primary-light)' :
-                      status === 'error'      ? 'text-(--color-error) bg-red-50' :
-                      status === 'submitting' ? 'text-blue-600 bg-blue-50' :
-                      'text-(--color-secondary) bg-(--color-muted)'
-                    }`}>
-                      {status === 'generating' ? `${stage?.progress ?? 0}%` :
-                       status === 'done'       ? 'Done' :
-                       status === 'error'      ? 'Error' :
-                       status === 'submitting' ? 'Submitting' : 'Pending'}
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                        status === 'done'       ? 'text-(--color-success) bg-emerald-50' :
+                        status === 'generating' ? 'text-(--color-primary) bg-(--color-primary-light)' :
+                        status === 'error'      ? 'text-(--color-error) bg-red-50' :
+                        status === 'submitting' ? 'text-blue-600 bg-blue-50' :
+                        'text-(--color-secondary) bg-(--color-muted)'
+                      }`}>
+                        {status === 'generating' ? `${stage?.progress ?? 0}%` :
+                         status === 'done'       ? 'Done' :
+                         status === 'error'      ? 'Error' :
+                         status === 'submitting' ? 'Submitting' : 'Pending'}
+                      </span>
+                      {(status === 'done' || status === 'error') && (
+                        <button
+                          onClick={() => onRegenerateStage(result.sceneIndex, key)}
+                          className="text-[11px] w-5 h-5 flex items-center justify-center rounded hover:bg-(--color-muted) text-(--color-secondary) hover:text-(--color-foreground) transition-colors"
+                          title={`Redo ${STAGE_LABELS[key]}`}
+                        >↺</button>
+                      )}
+                    </div>
                   </div>
                   {(status === 'generating' || status === 'done') && (
                     <div className="w-full h-1 bg-(--color-muted) rounded-full overflow-hidden">
@@ -121,8 +137,8 @@ export function PosedSceneCard({ result, onMerge, onRegenerate }: Props) {
 
         {/* Stage video previews */}
         {result.stages.some((s) => s.status === 'done') && (
-          <div className="grid grid-cols-2 gap-2">
-            {(['into', 'out'] as StageKey[]).map((key) => {
+          <div className="grid grid-cols-3 gap-2">
+            {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
               const stage = result.stages.find((s) => s.key === key && s.status === 'done');
               if (!stage?.jobId || !stage.frampackUrl) return (
                 <div key={key} className="aspect-[9/16] rounded-lg bg-(--color-muted) flex items-center justify-center">
@@ -149,7 +165,7 @@ export function PosedSceneCard({ result, onMerge, onRegenerate }: Props) {
         {result.merging && (
           <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-(--color-muted)">
             <span className="w-4 h-4 border-2 border-(--color-primary) border-t-transparent rounded-full" style={{ animation: 'spin 0.8s linear infinite' }} />
-            <span className="text-sm text-(--color-secondary)">Đang ghép A+C...</span>
+            <span className="text-sm text-(--color-secondary)">Đang ghép A+B+C...</span>
           </div>
         )}
 
@@ -161,11 +177,16 @@ export function PosedSceneCard({ result, onMerge, onRegenerate }: Props) {
 
         {result.mergedVideoUrl && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium text-(--color-secondary)">Merged (A+C)</span>
+            <span className="text-xs font-medium text-(--color-secondary)">Merged (A+B+C)</span>
             <video src={result.mergedVideoUrl} controls loop className="w-full rounded-xl bg-black" style={{ maxHeight: '240px' }} />
-            <button onClick={downloadMerged} className="btn-neumorphic w-full py-2 text-sm">
-              ↓ Download {result.label}.mp4
-            </button>
+            <div className="flex gap-2">
+              <button onClick={downloadMerged} className="btn-neumorphic flex-1 py-2 text-sm">
+                ↓ Download {result.label}.mp4
+              </button>
+              <button onClick={() => onRemerge(result.sceneIndex)} className="btn-neumorphic py-2 px-3 text-sm shrink-0">
+                ↺ Ghép lại
+              </button>
+            </div>
           </div>
         )}
       </div>

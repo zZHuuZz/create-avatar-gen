@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { randomUUID } from 'crypto';
+import { getClipPath } from '@/lib/clip-cache';
 
 const execAsync = promisify(exec);
 
@@ -27,6 +28,9 @@ export async function POST(request: Request) {
   const audio = formData.get('audio') as File | null;
   const totalDuration = parseFloat(formData.get('duration') as string);
   const sequence: SequenceItem[] = JSON.parse(formData.get('sequence') as string);
+  const useConcat = formData.get('concat') === 'true';
+  const customFade = parseFloat((formData.get('crossfadeDuration') as string) ?? '');
+  const FADE_DUR = !isNaN(customFade) ? Math.min(customFade, 0.5) : 0.12;
 
   if (!sequence?.length || !totalDuration) {
     return Response.json({ error: 'Missing sequence or duration' }, { status: 400 });
@@ -36,50 +40,88 @@ export async function POST(request: Request) {
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    // 1. Fetch each unique clip once
+    // 1. Resolve each unique clip from local cache (downloading from FramePack only if not
+    // already cached). This prevents 404s when FramePack expires old job results.
     const clipPaths = new Map<string, string>();
+    const clipActualDurations = new Map<string, number>();
     const uniqueJobs = [...new Map(sequence.map(s => [s.jobId, s])).values()];
 
-    await Promise.all(uniqueJobs.map(async (item, i) => {
-      const upstream = `${item.frampackUrl.replace(/\/$/, '')}/api/download/${item.jobId}`;
-      const res = await fetch(upstream, { signal: AbortSignal.timeout(60_000) });
-      if (!res.ok) throw new Error(`Failed to fetch clip "${item.label}": HTTP ${res.status}`);
-      const buf = await res.arrayBuffer();
-      const p = join(tmpDir, `source_${i}.mp4`);
-      await fs.writeFile(p, Buffer.from(buf));
+    await Promise.all(uniqueJobs.map(async (item) => {
+      const p = await getClipPath(item.jobId, item.frampackUrl);
       clipPaths.set(item.jobId, p);
+      try {
+        const { stdout } = await execAsync(
+          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`,
+          { timeout: 10_000 }
+        );
+        const d = parseFloat(stdout.trim());
+        if (!isNaN(d)) clipActualDurations.set(item.jobId, d);
+      } catch { /* fall back to config duration */ }
     }));
 
-    // 2. For each segment, loop the source clip to exactly fill the segment duration.
-    // deflicker smooths frame-to-frame brightness variance common in AI-generated video.
+    // 2. For each segment, trim/loop the source to the desired duration.
+    // Only use stream_loop when the source is shorter than requested (e.g. idle clips
+    // stretched to fill a gap). For posed clips (A/B/C), FramePack generates at ~8fps so
+    // the source duration already matches the config — no loop needed, no seam created.
     const segPaths: string[] = [];
     for (let i = 0; i < sequence.length; i++) {
       const item = sequence[i];
       const srcPath = clipPaths.get(item.jobId)!;
       const segPath = join(tmpDir, `seg_${i}.mp4`);
+      const srcActualDur = clipActualDurations.get(item.jobId) ?? 0;
+      // In concat mode (posed A+B+C) never loop — use source as-is to avoid
+      // replaying frame 0 when the clip is a few ms short of the config duration.
+      const needsLoop = !useConcat && srcActualDur > 0 && item.duration > srcActualDur + 0.02;
+      const loopFlag = needsLoop ? '-stream_loop -1' : '';
       await execAsync(
-        `ffmpeg -y -stream_loop -1 -i "${srcPath}" -t ${item.duration} -vf "deflicker=size=3:mode=am" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
+        `ffmpeg -y ${loopFlag} -i "${srcPath}" -t ${item.duration} -vf "deflicker=size=3:mode=am" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
         { timeout: 60_000 }
       );
       segPaths.push(segPath);
     }
 
-    // 3. Merge all segments with xfade crossfade between each pair of clips.
-    // xfade blends the last FADE_DUR seconds of clip N into the first FADE_DUR seconds
-    // of clip N+1, hiding both luminance jumps and pose discontinuities.
-    // offset formula: cumulative sum of (each clip's duration - FADE_DUR).
-    const FADE_DUR = 0.12;
+    // Probe actual encoded duration of each segment.
+    // AI video generators (FramePack) output at a fixed FPS (e.g. 8fps), so a 0.8s request
+    // produces 6 frames = 0.75s actual. Using config duration in xfade offsets would push
+    // the transition past the real clip end, causing FFmpeg to read the stream_loop seam
+    // (which replays frame 0 — the starting pose), creating a visible snap-back jump.
+    const segDurations = await Promise.all(
+      segPaths.map(async (p, i) => {
+        try {
+          const { stdout } = await execAsync(
+            `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`,
+            { timeout: 10_000 }
+          );
+          const d = parseFloat(stdout.trim());
+          return isNaN(d) ? sequence[i].duration : d;
+        } catch {
+          return sequence[i].duration;
+        }
+      })
+    );
+
+    // 3. Merge segments — either hard concat or xfade crossfade.
     const videoPath = join(tmpDir, 'video.mp4');
 
     if (segPaths.length === 1) {
       await fs.copyFile(segPaths[0], videoPath);
+    } else if (useConcat) {
+      // Hard concat: join clips with no blending (used for A+B+C posed scene merges).
+      const inputs = segPaths.map(p => `-i "${p}"`).join(' ');
+      const filterInputs = segPaths.map((_, i) => `[${i}:v]`).join('');
+      await execAsync(
+        `ffmpeg -y ${inputs} -filter_complex "${filterInputs}concat=n=${segPaths.length}:v=1:a=0[out]" -map "[out]" -c:v libx264 -pix_fmt yuv420p -an "${videoPath}"`,
+        { timeout: 120_000 }
+      );
     } else {
+      // xfade crossfade between each pair of clips.
+      // offset formula: cumulative sum of (each clip's ACTUAL duration - FADE_DUR).
       const inputs = segPaths.map(p => `-i "${p}"`).join(' ');
       let filterComplex = '';
       let cumOffset = 0;
       for (let i = 0; i < segPaths.length - 1; i++) {
-        const effectiveFade = Math.min(FADE_DUR, sequence[i].duration / 2, sequence[i + 1].duration / 2);
-        cumOffset += sequence[i].duration - effectiveFade;
+        const effectiveFade = Math.min(FADE_DUR, segDurations[i] / 2, segDurations[i + 1] / 2);
+        cumOffset += segDurations[i] - effectiveFade;
         const inLabel = i === 0 ? '[0:v]' : `[v${i}]`;
         const outLabel = i === segPaths.length - 2 ? '[out]' : `[v${i + 1}]`;
         filterComplex += `${inLabel}[${i + 1}:v]xfade=transition=fade:duration=${effectiveFade.toFixed(3)}:offset=${cumOffset.toFixed(3)}${outLabel}`;

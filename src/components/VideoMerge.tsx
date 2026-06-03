@@ -15,6 +15,8 @@ interface SequenceItem {
   label: string;
   duration: number;
   sceneIndex: number;
+  triggerWord?: string;
+  level?: 1 | 2;
 }
 
 interface AnalysisMarker {
@@ -22,24 +24,72 @@ interface AnalysisMarker {
   end: number;
   word: string;
   sceneKey: string;
+  isListIntro?: boolean;
 }
+
+type SceneKey = 'no-hand' | '1-hand' | '2-hand' | 'point-up';
 
 const SCENE_KEY_MAP: Record<string, number> = {
-  'no-hand': 0,
-  '1-hand': 1,
-  '2-hand': 2,
-  'point-up': 3,
+  'no-hand': 0, '1-hand': 1, '2-hand': 2, 'point-up': 3,
 };
 
-const STAGE_LABELS: Record<StageKey, string> = {
-  into: 'A',
-  hold: 'B',
-  out: 'C',
+const STAGE_LABELS: Record<StageKey, string> = { into: 'A', hold: 'B', out: 'C' };
+
+// Linguistic priority — based on discourse weight, not gesture type.
+const MARKER_PRIORITY: Record<string, number> = {
+  'đầu tiên': 4, 'cuối cùng': 4,
+  'thứ nhất': 4, 'thứ hai': 4, 'thứ ba': 4, 'thứ tư': 4, 'thứ năm': 4,
+  'thứ sáu': 4, 'thứ bảy': 4,
+  'nhưng': 3, 'tuy nhiên': 3, 'thế nhưng': 3, 'vậy mà': 3,
+  'kết quả là': 3, 'thay vì': 3, 'mặc dù': 3, 'do đó': 3, 'vì vậy': 3,
+  'tiếp theo': 2, 'kế tiếp': 2, 'hơn nữa': 2, 'ngoài ra': 2,
+  'bên cạnh đó': 2, 'song song đó': 2, 'không chỉ vậy': 2, 'đồng thời': 2,
+  'ví dụ như': 1, 'ví dụ': 1, 'chẳng hạn như': 1, 'chẳng hạn': 1,
+  'thậm chí': 1, 'đặc biệt là': 1, 'nhất là': 1, 'quan trọng hơn': 1,
 };
 
-function fmt(s: number) {
-  return s.toFixed(1) + 's';
+function getMarkerPriority(word: string): number {
+  const key = word.toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').trim();
+  return MARKER_PRIORITY[key] ?? 2;
 }
+
+const MARKER_COLORS: Record<SceneKey, { bg: string; text: string; border: string }> = {
+  'no-hand':  { bg: 'bg-gray-100',   text: 'text-gray-700',   border: 'border-gray-300' },
+  '1-hand':   { bg: 'bg-blue-100',   text: 'text-blue-800',   border: 'border-blue-300' },
+  '2-hand':   { bg: 'bg-green-100',  text: 'text-green-800',  border: 'border-green-300' },
+  'point-up': { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-300' },
+};
+
+function HighlightedTranscript({ text, markers }: { text: string; markers: AnalysisMarker[] }) {
+  type Seg = { type: 'text'; content: string } | { type: 'marker'; content: string; sceneKey: SceneKey };
+  const segs: Seg[] = [];
+  let rest = text;
+  for (const m of [...markers].sort((a, b) => a.start - b.start)) {
+    const idx = rest.indexOf(m.word);
+    if (idx === -1) continue;
+    if (idx > 0) segs.push({ type: 'text', content: rest.slice(0, idx) });
+    segs.push({ type: 'marker', content: m.word, sceneKey: m.sceneKey as SceneKey });
+    rest = rest.slice(idx + m.word.length);
+  }
+  if (rest) segs.push({ type: 'text', content: rest });
+
+  return (
+    <>
+      {segs.map((seg, i) => {
+        if (seg.type === 'text') return <span key={i}>{seg.content}</span>;
+        const c = MARKER_COLORS[seg.sceneKey] ?? MARKER_COLORS['2-hand'];
+        return (
+          <mark key={i} title={seg.sceneKey}
+            className={`${c.bg} ${c.text} rounded px-0.5 font-semibold not-italic`}>
+            {seg.content}
+          </mark>
+        );
+      })}
+    </>
+  );
+}
+
+function fmt(s: number) { return s.toFixed(1) + 's'; }
 
 export function VideoMerge({ scenes, posedScenes }: Props) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -47,6 +97,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
   const [sequence, setSequence] = useState<SequenceItem[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [transcript, setTranscript] = useState<string | null>(null);
+  const [markers, setMarkers] = useState<AnalysisMarker[]>([]);
   const [merging, setMerging] = useState(false);
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +117,19 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       : scene.poseConfig.stageOut.duration;
   }
 
+  function getGestureTotalDuration(sceneIndex: number): number {
+    if (sceneIndex === 3) {
+      // +2.0 for the talking delay before the gesture fires
+      return 2.0 + getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold') + getStageDuration(sceneIndex, 'out');
+    }
+    return getClipDuration(sceneIndex);
+  }
+
+  function getGestureLead(key: SceneKey): number {
+    if (SCENE_KEY_MAP[key] === 3) return -2.0; // fires 2s after trigger word
+    return 0;
+  }
+
   function sceneForIndex(index: number): SceneResult | undefined {
     return doneScenes.find((s) => s.index === index) ?? doneScenes[0];
   }
@@ -75,42 +139,36 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
     setAudioDuration(null);
     setMergedUrl(null);
     setTranscript(null);
+    setMarkers([]);
     const audio = new Audio(URL.createObjectURL(file));
     audio.onloadedmetadata = () => setAudioDuration(audio.duration);
   }
 
   function addScene(scene: SceneResult, duration?: number) {
-    setSequence((prev) => [
-      ...prev,
-      {
-        frampackUrl: scene.frampackUrl!,
-        jobId: scene.jobId!,
-        label: scene.label,
-        duration: duration ?? getClipDuration(scene.index),
-        sceneIndex: scene.index,
-      },
-    ]);
+    setSequence((prev) => [...prev, {
+      frampackUrl: scene.frampackUrl!,
+      jobId: scene.jobId!,
+      label: scene.label,
+      duration: duration ?? getClipDuration(scene.index),
+      sceneIndex: scene.index,
+    }]);
   }
 
   function addPosedStage(ps: PosedSceneResult, stageKey: StageKey) {
     const stage = ps.stages.find((s) => s.key === stageKey && s.status === 'done');
     if (!stage?.jobId || !stage.frampackUrl) return;
-    setSequence((prev) => [
-      ...prev,
-      {
-        frampackUrl: stage.frampackUrl!,
-        jobId: stage.jobId!,
-        label: `${ps.label} ${STAGE_LABELS[stageKey]}`,
-        duration: getStageDuration(ps.sceneIndex, stageKey),
-        sceneIndex: ps.sceneIndex,
-      },
-    ]);
+    setSequence((prev) => [...prev, {
+      frampackUrl: stage.frampackUrl!,
+      jobId: stage.jobId!,
+      label: `${ps.label} ${STAGE_LABELS[stageKey]}`,
+      duration: getStageDuration(ps.sceneIndex, stageKey),
+      sceneIndex: ps.sceneIndex,
+    }]);
   }
 
   function addAllPosedStages(ps: PosedSceneResult) {
-    const keys: StageKey[] = ['into', 'hold', 'out'];
     const items: SequenceItem[] = [];
-    for (const key of keys) {
+    for (const key of ['into', 'hold', 'out'] as StageKey[]) {
       const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
       if (!stage?.jobId || !stage.frampackUrl) continue;
       items.push({
@@ -124,39 +182,27 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
     setSequence((prev) => [...prev, ...items]);
   }
 
-  function removeAt(pos: number) {
-    setSequence((prev) => prev.filter((_, i) => i !== pos));
-  }
-
+  function removeAt(pos: number) { setSequence((prev) => prev.filter((_, i) => i !== pos)); }
   function moveUp(pos: number) {
     if (pos === 0) return;
-    setSequence((prev) => {
-      const next = [...prev];
-      [next[pos - 1], next[pos]] = [next[pos], next[pos - 1]];
-      return next;
-    });
+    setSequence((prev) => { const n = [...prev]; [n[pos - 1], n[pos]] = [n[pos], n[pos - 1]]; return n; });
   }
-
   function moveDown(pos: number) {
     setSequence((prev) => {
       if (pos >= prev.length - 1) return prev;
-      const next = [...prev];
-      [next[pos], next[pos + 1]] = [next[pos + 1], next[pos]];
-      return next;
+      const n = [...prev]; [n[pos], n[pos + 1]] = [n[pos + 1], n[pos]]; return n;
     });
   }
 
   function autoFill() {
     if (!audioDuration || doneScenes.length === 0) return;
     const items: SequenceItem[] = [];
-    let total = 0;
-    let i = 0;
+    let total = 0; let i = 0;
     while (total < audioDuration) {
       const scene = doneScenes[i % doneScenes.length];
       const dur = getClipDuration(scene.index);
       items.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: dur, sceneIndex: scene.index });
-      total += dur;
-      i++;
+      total += dur; i++;
     }
     setSequence(items);
   }
@@ -166,6 +212,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
     setAnalyzing(true);
     setError(null);
     setTranscript(null);
+    setMarkers([]);
 
     try {
       const form = new FormData();
@@ -174,58 +221,169 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Analysis failed');
 
-      const markers: AnalysisMarker[] = data.markers ?? [];
+      const rawMarkers: AnalysisMarker[] = data.markers ?? [];
+      const secondaryMarkersData: { start: number; end: number; word: string }[] = data.secondaryMarkers ?? [];
       setTranscript(data.transcript ?? '');
+      setMarkers(rawMarkers);
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
-
-      const noHandScene = sceneForIndex(0);
       const noHandClipDur = getClipDuration(0);
+      const noHandPool = doneScenes.filter((s) => !(ALL_SCENES.find((a) => a.index === s.index)?.hasArm));
+      const handFillerPool = doneScenes.filter((s) => { const sc = ALL_SCENES.find((a) => a.index === s.index); return sc?.hasArm && s.index !== 3; });
 
-      const items: SequenceItem[] = [];
-      let cursor = 0;
-
-      for (const marker of markers) {
-        const gapDur = marker.start - cursor;
-        if (gapDur > 0 && noHandScene) {
-          const count = Math.max(1, Math.round(gapDur / noHandClipDur));
-          for (let i = 0; i < count; i++) {
-            items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
-          }
+      // Step 1: Resolve back-to-back specials — keep higher linguistic priority, drop lower.
+      // First marker anchors at position 0 (always starts with gesture).
+      const resolvedMarkers = rawMarkers.reduce<AnalysisMarker[]>((acc, curr) => {
+        if (!acc.length) return [curr];
+        const prev = acc[acc.length - 1];
+        const prevGestureDur = getGestureTotalDuration(SCENE_KEY_MAP[prev.sceneKey] ?? 2);
+        const prevAnchor = acc.length === 1 ? 0 : prev.start;
+        if (curr.start < prevAnchor + prevGestureDur) {
+          // Priority: point-up > L1 (by tier) > lower tier
+          const currIsPointUp = curr.sceneKey === 'point-up';
+          const prevIsPointUp = prev.sceneKey === 'point-up';
+          const currWins = curr.isListIntro && !prev.isListIntro ? true
+            : !curr.isListIntro && prev.isListIntro ? false
+            : currIsPointUp && !prevIsPointUp ? true
+            : !currIsPointUp && prevIsPointUp ? false
+            : getMarkerPriority(curr.word) > getMarkerPriority(prev.word);
+          if (currWins) acc[acc.length - 1] = curr;
+          return acc;
         }
+        return [...acc, curr];
+      }, []);
 
-        const targetIndex = SCENE_KEY_MAP[marker.sceneKey] ?? 2;
+      // Step 2: Point-up rules — 1 per video max; list-intro markers keep point-up unconditionally.
+      let pointUpUsed = false;
+      const step2Markers = resolvedMarkers.map(m => {
+        if (m.sceneKey !== 'point-up') return m;
+        if (m.isListIntro) return m;
+        if (!pointUpUsed) { pointUpUsed = true; return m; }
+        return { ...m, sceneKey: '1-hand' };
+      });
 
-        // Use posed stages for scenes 1 and 3
-        if (targetIndex === 1 || targetIndex === 3) {
-          const ps = posedScenes.find((p) => p.sceneIndex === targetIndex);
-          if (ps) {
-            const keys: StageKey[] = ['into', 'hold', 'out'];
-            for (const key of keys) {
-              const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
-              if (!stage?.jobId) continue;
-              const dur = getStageDuration(targetIndex, key);
-              items.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[key]}`, duration: dur, sceneIndex: targetIndex });
-            }
-            cursor = marker.start + getStageDuration(targetIndex, 'into') + getStageDuration(targetIndex, 'hold') + getStageDuration(targetIndex, 'out');
+      // Step 2.5: Gesture variety — if the same gesture repeats more than 2× in a row,
+      // rotate to the other main type (1-hand ↔ 2-hand). Keeps the video from feeling monotonous.
+      const finalMarkers = step2Markers.reduce<{ out: AnalysisMarker[]; streak: number; lastKey: string | null }>(
+        (acc, m) => {
+          const key = m.sceneKey;
+          if (key === 'point-up' || key === 'no-hand') { acc.out.push(m); return acc; }
+          const sameAsLast = key === acc.lastKey;
+          const streak = sameAsLast ? acc.streak + 1 : 1;
+          if (streak > 2) {
+            const rotated = key === '1-hand' ? '2-hand' : '1-hand';
+            acc.out.push({ ...m, sceneKey: rotated });
+            acc.lastKey = rotated; acc.streak = 1;
+          } else {
+            acc.out.push(m);
+            acc.lastKey = key; acc.streak = streak;
+          }
+          return acc;
+        },
+        { out: [], streak: 0, lastKey: null }
+      ).out;
+
+      // Step 3: Build sequence.
+      // Gesture starts BEFORE the trigger word so the hand reaches position as the word is spoken.
+      // Lead time is per-scene: posed scenes use their stageInto duration; 2-hand uses 0.7s.
+      const out: SequenceItem[] = [];
+      let cursor = 0;
+      let noHandN = 0;
+
+      function pushNoHand(duration: number) {
+        if (noHandPool.length === 0 || duration < 0.5) return;
+        const count = Math.max(1, Math.round(duration / noHandClipDur));
+        const stretchedDur = parseFloat((duration / count).toFixed(3));
+        for (let n = 0; n < count; n++) {
+          const scene = noHandPool[(noHandN + n) % noHandPool.length];
+          out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: stretchedDur, sceneIndex: scene.index });
+        }
+        noHandN += count;
+      }
+
+      // Fill a gap: insert 1-hand clips at secondary marker timestamps,
+      // and as a fallback insert one at 1/3 point for any gap longer than 3s.
+      // idleAtEnd: reserve this many seconds at the end of the gap as no-hand (used before point-up)
+      function fillGap(gapStartTime: number, gapDur: number, idleAtEnd = 0) {
+        if (gapDur <= 0) return;
+        if (handFillerPool.length === 0) { pushNoHand(gapDur); return; }
+        const gapEnd = gapStartTime + gapDur;
+        const handZoneEnd = gapEnd - idleAtEnd; // hand clips only allowed before this
+        const inGap = secondaryMarkersData.filter(m => m.start >= gapStartTime && m.start < Math.max(gapStartTime, handZoneEnd));
+        if (inGap.length === 0) { pushNoHand(gapDur); return; }
+
+        let pos = gapStartTime;
+        for (const sm of inGap) {
+          const handClipDur = getClipDuration(handFillerPool[0].index);
+          const latestFit = handZoneEnd - handClipDur; // latest start where clip still fits fully
+          if (latestFit < pos) continue; // no room left even if shifted
+          // Place as close to word as possible; shift left if word is too close to handZoneEnd
+          const handStart = Math.min(Math.max(pos, sm.start), latestFit);
+          if (handStart > pos) pushNoHand(handStart - pos);
+          const scene = handFillerPool[noHandN % handFillerPool.length];
+          out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: handClipDur, sceneIndex: scene.index, triggerWord: sm.word, level: 2 });
+          noHandN++;
+          pos = handStart + handClipDur;
+        }
+        if (pos < gapEnd) pushNoHand(gapEnd - pos);
+      }
+
+      function pushGestureClips(key: SceneKey, triggerWord?: string) {
+        const sceneIndex = SCENE_KEY_MAP[key] ?? 2;
+        if (sceneIndex === 3) {
+          const ps = posedScenes.find(p => p.sceneIndex === sceneIndex);
+          if (!ps) return;
+          let first = true;
+          for (const stageKey of ['into', 'hold', 'out'] as StageKey[]) {
+            const stage = ps.stages.find(s => s.key === stageKey && s.status === 'done');
+            if (!stage?.jobId || !stage.frampackUrl) continue;
+            out.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[stageKey]}`, duration: getStageDuration(sceneIndex, stageKey), sceneIndex, ...(first ? { triggerWord, level: 1 as const } : {}) });
+            first = false;
           }
         } else {
-          const gestureScene = sceneForIndex(targetIndex);
-          if (gestureScene) {
-            const clipDur = getClipDuration(gestureScene.index);
-            items.push({ frampackUrl: gestureScene.frampackUrl!, jobId: gestureScene.jobId!, label: gestureScene.label, duration: clipDur, sceneIndex: gestureScene.index });
-            cursor = marker.start + clipDur;
-          }
+          const scene = sceneForIndex(sceneIndex);
+          if (!scene) return;
+          out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: getClipDuration(scene.index), sceneIndex: scene.index, triggerWord, level: 1 });
         }
+      }
+
+      for (let mi = 0; mi < finalMarkers.length; mi++) {
+        const marker = finalMarkers[mi];
+        const key = (marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand') as SceneKey;
+        const gestureDur = getGestureTotalDuration(SCENE_KEY_MAP[key]);
+        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - getGestureLead(key));
+
+        if (mi > 0) {
+          const gapDur = gestureStart - cursor;
+          if (gapDur > 0) fillGap(cursor, gapDur, SCENE_KEY_MAP[key] === 3 ? noHandClipDur : 0);
+        }
+
+        pushGestureClips(key, marker.word);
+        cursor = gestureStart + gestureDur;
       }
 
       const remaining = totalAudioDur - cursor;
-      if (remaining > 0 && noHandScene) {
-        const count = Math.max(1, Math.round(remaining / noHandClipDur));
-        for (let i = 0; i < count; i++) {
-          items.push({ frampackUrl: noHandScene.frampackUrl!, jobId: noHandScene.jobId!, label: noHandScene.label, duration: noHandClipDur, sceneIndex: 0 });
-        }
+      if (remaining > 0) fillGap(cursor, remaining);
+
+      // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
+      // Point-up resets the streak. Short idle clips are transparent (don't reset).
+      let lastHandIdx: number | null = null;
+      let handStreak = 0;
+      const final: SequenceItem[] = [];
+      for (const item of out) {
+        if (item.sceneIndex === 3) { lastHandIdx = null; handStreak = 0; final.push(item); continue; }
+        const isHand = item.sceneIndex === 1 || item.sceneIndex === 2;
+        if (!isHand) { final.push(item); continue; }
+        if (item.sceneIndex === lastHandIdx) { handStreak++; } else { lastHandIdx = item.sceneIndex; handStreak = 1; }
+        if (handStreak >= 3) {
+          const altIdx: number = item.sceneIndex === 1 ? 2 : 1;
+          const alt = doneScenes.find(s => s.index === altIdx);
+          if (alt) {
+            final.push({ ...item, frampackUrl: alt.frampackUrl!, jobId: alt.jobId!, label: alt.label, sceneIndex: alt.index });
+            lastHandIdx = altIdx; handStreak = 1;
+          } else { final.push(item); }
+        } else { final.push(item); }
       }
-      setSequence(items);
+      setSequence(final);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -252,12 +410,10 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
       const res = await fetch('/api/merge-video', { method: 'POST', body: form });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `Server error ${res.status}`);
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? `Server error ${res.status}`);
       }
-
-      const blob = await res.blob();
-      setMergedUrl(URL.createObjectURL(blob));
+      setMergedUrl(URL.createObjectURL(await res.blob()));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -275,7 +431,6 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
   const hasDoneRegular = doneScenes.length > 0;
   const hasDonePosed = posedScenes.some((ps) => ps.stages.some((s) => s.status === 'done'));
-
   if (!hasDoneRegular && !hasDonePosed) return null;
 
   return (
@@ -311,10 +466,40 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         </button>
       )}
 
+      {/* Transcript + markers */}
       {transcript && (
-        <div className="px-3 py-2.5 rounded-xl bg-(--color-muted) text-[11px] text-(--color-secondary) leading-relaxed">
-          <span className="font-medium text-(--color-foreground) block mb-1">Transcript</span>
-          {transcript}
+        <div className="flex flex-col gap-2">
+          <div className="px-3 py-2.5 rounded-xl bg-(--color-muted) text-[11px] text-(--color-secondary) leading-relaxed">
+            <span className="font-medium text-(--color-foreground) block mb-1">Transcript</span>
+            <HighlightedTranscript text={transcript} markers={markers} />
+          </div>
+
+          {markers.length > 0 && (
+            <div className="px-3 py-2.5 rounded-xl border border-(--color-border) text-[11px]">
+              <span className="font-medium text-(--color-foreground) block mb-2">
+                Detected markers ({markers.length})
+              </span>
+              <div className="flex flex-col gap-1">
+                {markers.map((m, i) => {
+                  const c = MARKER_COLORS[m.sceneKey as SceneKey] ?? MARKER_COLORS['2-hand'];
+                  return (
+                    <div key={i} className={`flex items-center gap-2 px-2 py-1 rounded-lg border ${c.bg} ${c.border}`}>
+                      <span className={`font-semibold ${c.text} min-w-0 flex-1`}>"{m.word}"</span>
+                      <span className="text-(--color-secondary) shrink-0">{m.start.toFixed(2)}s – {m.end.toFixed(2)}s</span>
+                      <span className={`shrink-0 font-medium ${c.text}`}>{m.sceneKey}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-3 mt-2 pt-2 border-t border-(--color-border)">
+                {(['2-hand', '1-hand', 'point-up'] as SceneKey[]).map((k) => {
+                  const c = MARKER_COLORS[k];
+                  const label = k === '2-hand' ? '2 tay' : k === '1-hand' ? '1 tay' : 'Chỉ lên trời';
+                  return <span key={k} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.bg} ${c.text}`}>{label}</span>;
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -377,6 +562,12 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
               <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-(--color-border) bg-(--color-card)">
                 <span className="text-xs text-(--color-secondary) w-4 text-right shrink-0">{i + 1}</span>
                 <span className="text-sm text-(--color-foreground) flex-1 truncate">{item.label}</span>
+                {item.level === 1 && item.triggerWord && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium shrink-0">L1 · "{item.triggerWord}"</span>
+                )}
+                {item.level === 2 && item.triggerWord && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium shrink-0">L2 · "{item.triggerWord}"</span>
+                )}
                 <span className="text-xs text-(--color-secondary) shrink-0">{fmt(item.duration)}</span>
                 <div className="flex gap-0.5 shrink-0">
                   <button onClick={() => moveUp(i)} disabled={i === 0} className="text-xs w-5 h-5 flex items-center justify-center rounded hover:bg-(--color-muted) disabled:opacity-30">↑</button>

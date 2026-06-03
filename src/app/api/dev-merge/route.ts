@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 
 export const maxDuration = 600;
 
-// sequence item: { sceneIndex: 0|1|2|3, duration: number }
+// sequence item: { sceneIndex: 0|1|2|3|4, duration: number }
 export async function POST(request: Request) {
   let formData: FormData;
   try {
@@ -32,9 +32,9 @@ export async function POST(request: Request) {
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    // Save uploaded videos (0–3) to disk
-    const videoPaths: (string | null)[] = [null, null, null, null];
-    for (let i = 0; i < 4; i++) {
+    // Save uploaded videos (0–4) to disk
+    const videoPaths: (string | null)[] = [null, null, null, null, null];
+    for (let i = 0; i < 5; i++) {
       const file = formData.get(`video_${i}`) as File | null;
       if (file) {
         const p = join(tmpDir, `source_${i}.mp4`);
@@ -43,10 +43,17 @@ export async function POST(request: Request) {
       }
     }
 
+    // Drop clips too short to encode reliably (< 0.5s = fewer than ~15 frames)
+    const MIN_CLIP_DUR = 0.5;
+    const validSequence = sequence.filter(item => item.duration >= MIN_CLIP_DUR);
+    if (!validSequence.length) {
+      return Response.json({ error: 'All clips are too short to merge' }, { status: 400 });
+    }
+
     // Build per-segment clips with deflicker applied to smooth AI-video temporal noise
     const segPaths: string[] = [];
-    for (let i = 0; i < sequence.length; i++) {
-      const { sceneIndex, duration } = sequence[i];
+    for (let i = 0; i < validSequence.length; i++) {
+      const { sceneIndex, duration } = validSequence[i];
       const srcPath = videoPaths[sceneIndex];
       if (!srcPath) {
         return Response.json({ error: `No video uploaded for scene ${sceneIndex}` }, { status: 400 });
@@ -75,8 +82,8 @@ export async function POST(request: Request) {
       let cumOffset = 0;
       for (let i = 0; i < segPaths.length - 1; i++) {
         // Guard: if a clip is too short for a fade, skip xfade for that cut
-        const effectiveFade = Math.min(FADE_DUR, sequence[i].duration / 2, sequence[i + 1].duration / 2);
-        cumOffset += sequence[i].duration - effectiveFade;
+        const effectiveFade = Math.min(FADE_DUR, validSequence[i].duration / 2, validSequence[i + 1].duration / 2);
+        cumOffset += validSequence[i].duration - effectiveFade;
         const inLabel = i === 0 ? '[0:v]' : `[v${i}]`;
         const outLabel = i === segPaths.length - 2 ? '[out]' : `[v${i + 1}]`;
         filterComplex += `${inLabel}[${i + 1}:v]xfade=transition=fade:duration=${effectiveFade.toFixed(3)}:offset=${cumOffset.toFixed(3)}${outLabel}`;

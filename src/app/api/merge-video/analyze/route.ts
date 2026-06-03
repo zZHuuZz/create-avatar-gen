@@ -224,5 +224,39 @@ export async function POST(request: Request) {
     };
   }).sort((a, b) => a.start - b.start);
 
-  return Response.json({ transcript: fullText, markers, audioDuration });
+  // 5. Secondary emphasis words → hand filler clips placed at these timestamps within gaps.
+  // Emphatic/contrastive Vietnamese patterns that signal a strong or interesting point.
+  const SECONDARY_HAND_WORDS = [
+    // Negation / correction
+    'chứ không phải', 'chứ không', 'không phải là', 'không hề', 'không thể nào',
+    // Passive emphasis (something happens to subject)
+    'sẽ bị', 'đã bị', 'bị',
+    // Strong assertion / possibility
+    'hoàn toàn có thể', 'hoàn toàn', 'chắc chắn', 'nhất định',
+    // Reality / clarity
+    'thực chất', 'thực sự', 'thật sự',
+    // Intensity
+    'cực kỳ', 'vô cùng', 'tuyệt đối', 'luôn luôn',
+    // Attention
+    'chú ý', 'lưu ý', 'đặc biệt',
+  ];
+  const seenSecondary = new Set<number>();
+  const secondaryMarkers: { start: number; end: number; word: string; sceneKey: string }[] = [];
+  for (const phrase of SECONDARY_HAND_WORDS) {
+    for (const group of findAllOccurrences(phrase, words)) {
+      const startIdx = group[0];
+      if (!seenStart.has(startIdx) && !seenSecondary.has(startIdx)) {
+        seenSecondary.add(startIdx);
+        secondaryMarkers.push({
+          start: words[startIdx].start,
+          end: words[group[group.length - 1]].end,
+          word: group.map(i => words[i].word).join(' '),
+          sceneKey: '1-hand',
+        });
+      }
+    }
+  }
+  secondaryMarkers.sort((a, b) => a.start - b.start);
+
+  return Response.json({ transcript: fullText, markers, secondaryMarkers, audioDuration });
 }

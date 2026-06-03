@@ -3,6 +3,7 @@ import path from 'path';
 import { normalizePose, generatePoseImage } from '@/lib/openai-image';
 import { submitJob, pollJobSSE } from '@/lib/framepack';
 import { ALL_SCENES } from '@/lib/scene-config';
+import { getClipPath } from '@/lib/clip-cache';
 import type { GeneratePosedVideoRequest, PosedSSEEvent, StageKey } from '@/types/pipeline';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,7 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { imageBase64, poseImageBase64: preGeneratedPose, frampackUrl: bodyFrampackUrl, baseSeed, sceneIndex } = body;
+  const { imageBase64, poseImageBase64: preGeneratedPose, frampackUrl: bodyFrampackUrl, baseSeed, sceneIndex, stageOnly } = body;
   const url = bodyFrampackUrl || process.env.FRAMEPACK_API_URL;
   const openaiKey = process.env.GEMINI_API_KEY;
 
@@ -74,10 +75,12 @@ export async function POST(request: Request) {
 
         const seed = baseSeed ?? Math.floor(Math.random() * 1_000_000);
 
-        const stages: Array<{ key: StageKey; startImage: string; endImage: string; config: typeof poseConfig.stageInto }> = [
-          { key: 'into', startImage: imageBase64, endImage: poseImageBase64, config: poseConfig.stageInto },
-          { key: 'out', startImage: poseImageBase64, endImage: imageBase64, config: poseConfig.stageOut },
+        const allStages: Array<{ key: StageKey; startImage: string; endImage: string; config: typeof poseConfig.stageInto; guidanceScale: number; steps: number }> = [
+          { key: 'into', startImage: imageBase64,      endImage: poseImageBase64, config: poseConfig.stageInto, guidanceScale: poseConfig.stageInto.guidanceScale ?? 7,  steps: 20 },
+          { key: 'hold', startImage: poseImageBase64,  endImage: poseImageBase64, config: poseConfig.stageHold, guidanceScale: poseConfig.stageHold.guidanceScale ?? 7,  steps: 25 },
+          { key: 'out',  startImage: poseImageBase64,  endImage: imageBase64,     config: poseConfig.stageOut,  guidanceScale: poseConfig.stageOut.guidanceScale  ?? 7,  steps: 20 },
         ];
+        const stages = stageOnly ? allStages.filter(s => s.key === stageOnly) : allStages;
 
         for (const stage of stages) {
           if (abortController.signal.aborted) break;
@@ -90,8 +93,8 @@ export async function POST(request: Request) {
               prompt: stage.config.prompt,
               negativePrompt: stage.config.negativePrompt,
               duration: stage.config.duration,
-              steps: 25,
-              guidanceScale: 15,
+              steps: stage.steps,
+              guidanceScale: stage.guidanceScale,
               seed: seed + sceneIndex * 100 + (stage.key === 'into' ? 0 : stage.key === 'hold' ? 1 : 2),
               useTeacache: true,
               endImageBase64: stage.endImage,
@@ -108,6 +111,8 @@ export async function POST(request: Request) {
               (pct) => send({ type: 'stage-progress', stage: stage.key, pct }),
               abortController.signal
             );
+            // Cache clip immediately so it survives FramePack job expiry
+            getClipPath(jobId, url).catch(() => {});
             send({ type: 'stage-done', stage: stage.key, jobId, frampackUrl: url });
           } catch (err) {
             if (abortController.signal.aborted) break;

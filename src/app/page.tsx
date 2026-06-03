@@ -35,7 +35,7 @@ function makePosedScene(sceneIndex: number): PosedSceneResult {
     sceneIndex,
     label: scene.label,
     poseStatus: 'pending',
-    stages: (['into', 'out'] as StageKey[]).map((key) => ({
+    stages: (['into', 'hold', 'out'] as StageKey[]).map((key) => ({
       key,
       label: STAGE_LABELS[key],
       status: 'pending',
@@ -125,7 +125,7 @@ export default function Home() {
 
   async function handleRegeneratePose(sceneIndex: number) {
     if (!portrait) return;
-    const step = sceneIndex === 1 ? 'pose-1' : sceneIndex === 3 ? 'pose-3' : null;
+    const step = sceneIndex === 3 ? 'pose-3' : null;
     if (!step) return;
     setRegeneratingPoses((prev) => new Set([...prev, sceneIndex]));
     try {
@@ -216,16 +216,20 @@ export default function Home() {
     );
   }
 
-  async function streamPosedScene(sceneIndex: number, imageBase64: string, baseSeed: number) {
+  async function streamPosedScene(sceneIndex: number, imageBase64: string, baseSeed: number, stageOnly?: StageKey) {
+    const poseImageBase64 = posedScenes.find(ps => ps.sceneIndex === sceneIndex)?.poseImageBase64
+      ?? generatedPoses[sceneIndex]
+      ?? null;
     const res = await fetch('/api/generate-posed-video', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         imageBase64,
         portraitBase64: portrait,
-        poseImageBase64: generatedPoses[sceneIndex] ?? null,
+        poseImageBase64,
         baseSeed,
         sceneIndex,
+        ...(stageOnly ? { stageOnly } : {}),
       }),
     });
 
@@ -386,11 +390,55 @@ export default function Home() {
     }
   }
 
+  async function handleRegenerateStage(sceneIndex: number, stageKey: StageKey) {
+    if (!generated) return;
+    const baseSeed = Math.floor(Math.random() * 1_000_000);
+
+    setPosedScenes((prev) =>
+      prev.map((ps) => {
+        if (ps.sceneIndex !== sceneIndex) return ps;
+        return {
+          ...ps,
+          mergedVideoUrl: undefined,
+          mergeError: undefined,
+          stages: ps.stages.map((s) =>
+            s.key === stageKey ? { ...s, status: 'pending', progress: 0, jobId: undefined, frampackUrl: undefined } : s
+          ),
+        };
+      })
+    );
+
+    await streamPosedScene(sceneIndex, generated, baseSeed, stageKey).catch((err) => {
+      setPosedScenes((prev) =>
+        prev.map((ps) =>
+          ps.sceneIndex !== sceneIndex ? ps : {
+            ...ps,
+            stages: ps.stages.map((s) =>
+              s.key === stageKey ? { ...s, status: 'error', error: String(err) } : s
+            ),
+          }
+        )
+      );
+    });
+  }
+
+  async function handleRemergePosedScene(sceneIndex: number) {
+    setPosedScenes((prev) =>
+      prev.map((r) =>
+        r.sceneIndex === sceneIndex ? { ...r, mergedVideoUrl: undefined, mergeError: undefined } : r
+      )
+    );
+    await handleMergePosedScene(sceneIndex);
+  }
+
   const handleMergePosedScene = useCallback(async (sceneIndex: number) => {
     const ps = posedScenes.find((r) => r.sceneIndex === sceneIndex);
     if (!ps) return;
-    const donestages = ps.stages.filter((s) => s.status === 'done' && s.jobId && s.frampackUrl);
-    if (donestages.length !== 2) return;
+    const ORDER: StageKey[] = ['into', 'hold', 'out'];
+    const donestages = ORDER
+      .map((key) => ps.stages.find((s) => s.key === key))
+      .filter((s): s is NonNullable<typeof s> => !!s && s.status === 'done' && !!s.jobId && !!s.frampackUrl);
+    if (donestages.length !== 3) return;
 
     setPosedScenes((prev) =>
       prev.map((r) => r.sceneIndex === sceneIndex ? { ...r, merging: true, mergeError: undefined } : r)
@@ -407,6 +455,7 @@ export default function Home() {
         return acc + dur;
       }, 0);
       form.append('duration', String(totalDuration));
+      form.append('concat', 'true');
       form.append(
         'sequence',
         JSON.stringify(
@@ -546,7 +595,7 @@ export default function Home() {
               )}
               <Section title="Video Settings">
                 <div className="flex gap-2">
-                  {([['quick', 'Quick test', '1 scene (no hands)'], ['all', 'Tất cả', '4 scenes']] as const).map(([key, label, sub]) => (
+                  {([['quick', 'Quick test', '1 scene (no hands)'], ['all', 'Tất cả', '5 scenes']] as const).map(([key, label, sub]) => (
                     <button
                       key={key}
                       onClick={() => setSceneMode(key)}
@@ -591,6 +640,8 @@ export default function Home() {
                   result={ps}
                   onMerge={handleMergePosedScene}
                   onRegenerate={handleRegenerateScene}
+                  onRemerge={handleRemergePosedScene}
+                  onRegenerateStage={handleRegenerateStage}
                 />
               ))}
 

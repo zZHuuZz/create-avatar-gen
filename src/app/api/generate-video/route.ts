@@ -1,5 +1,6 @@
 import { submitJob, pollJobSSE } from '@/lib/framepack';
 import { ALL_SCENES, QUICK_SCENE } from '@/lib/scene-config';
+import { getClipPath } from '@/lib/clip-cache';
 import type { GenerateVideoRequest, SSEEvent } from '@/types/pipeline';
 
 export const dynamic = 'force-dynamic';
@@ -75,6 +76,8 @@ export async function POST(request: Request) {
               (pct) => send({ type: 'scene-progress', sceneIndex: scene.index, pct }),
               abortController.signal
             );
+            // Cache clip immediately so it survives FramePack job expiry
+            getClipPath(jobId, url).catch(() => {});
             send({ type: 'scene-done', sceneIndex: scene.index, jobId, frampackUrl: url });
           } catch (err) {
             if (abortController.signal.aborted) break;

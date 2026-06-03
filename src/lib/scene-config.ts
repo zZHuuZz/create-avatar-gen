@@ -10,9 +10,9 @@ export const ALL_SCENES: SceneConfig[] = [
     index: 0,
     label: 'Chỉ nói, không đưa tay',
     prompt:
-      'Person speaks naturally to the camera. Eyes blink regularly and naturally throughout the entire video. Hands completely still and resting at all times. Subtle natural head movement. Natural facial expressions with frequent eye blinking.',
+      'Person speaks naturally to the camera. Eyes blink regularly. Hands completely still and resting. Subtle natural head movement and gentle body sway with speech rhythm. Natural facial expressions with frequent eye blinking.',
     negativePrompt: `arms raising, arms reaching, hand gestures, waving, pointing, arm movement, gesticulating, eyes wide open without blinking, ${BASE_NEGATIVE}`,
-    duration: 2.5,
+    duration: 2,
     seedOffset: 0,
     hasArm: false,
     useEndImage: true,
@@ -21,43 +21,20 @@ export const ALL_SCENES: SceneConfig[] = [
     index: 1,
     label: '1 tay',
     prompt:
-      'A person is speaking to the camera. Primary motion: right hand rises to chest level making a single gentle gesture. Slow and controlled hand movement. Natural facial expressions with frequent eye blinking.',
-    negativePrompt: `left arm moving, both hands moving, two hands gesturing, symmetric gesture, rapid movement, ${BASE_NEGATIVE}`,
-    duration: 5,
+      'A person speaking expressively to the camera. RIGHT hand is already raised at stomach/mid-torso level and moves continuously throughout — open palm pushes forward, wrist flicks, hand rotates and bobs with each word, fingers spread and close. Expressive ongoing talking gesture with right hand, always in motion. LEFT arm hangs completely still at side. Natural head nods and facial expressions.',
+    negativePrompt: `left arm moving, both hands moving, two hands gesturing, right hand still, right hand frozen, static hand, hand lowering, arm dropping, hand touching chest, ${BASE_NEGATIVE}`,
+    duration: 1.8,
     seedOffset: 10,
     hasArm: true,
     useEndImage: true,
-    poseConfig: {
-      referenceImageFile: 'reference-onehand.jpg',
-      posePrompt:
-        'Right hand raised to chest height, open palm facing slightly forward. Left hand and left forearm stay at waist level, fully visible. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
-      stageInto: {
-        prompt:
-          'Person smoothly raises right hand from resting position up to chest level, making a gentle open-palm gesture. Slow, gradual, natural arm movement. Left arm stays completely still.',
-        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
-        duration: 2,
-      },
-      stageHold: {
-        prompt:
-          'Person speaking naturally to camera. Right hand held at chest level with open palm. Subtle head movement and natural blinking. Body and arms stay still.',
-        negativePrompt: `arms dropping, hands lowering, arm movement, ${HAND_NEGATIVE}`,
-        duration: 3,
-      },
-      stageOut: {
-        prompt:
-          'Person smoothly lowers right hand from chest level back down to rest at their side. Slow, gradual, natural arm movement.',
-        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
-        duration: 2,
-      },
-    },
   },
   {
     index: 2,
     label: '2 tay',
     prompt:
-      'A person talking to camera. Naturally speaking, both hands move expressively, two arms spread expressively to the sides. Hands sweep out then come back in.',
-    negativePrompt: `hands frozen, no movement, hands stay open, arms stay extended, static pose, ${BASE_NEGATIVE}`,
-    duration: 2.5,
+      'A person talking to camera. Both hands make one single decisive sweep outward then return. One crisp open-arm gesture, not repeated. Confident and natural.',
+    negativePrompt: `repeated gesture, double movement, hands frozen, arms stay extended, static pose, ${BASE_NEGATIVE}`,
+    duration: 1.5,
     seedOffset: 20,
     hasArm: true,
     useEndImage: true,
@@ -75,28 +52,39 @@ export const ALL_SCENES: SceneConfig[] = [
     poseConfig: {
       referenceImageFile: 'reference-pointup.jpg',
       posePrompt:
-        'Right arm raised, right index finger pointing straight up, all other fingers naturally curled. Left arm bent at elbow, left forearm angled slightly forward, left hand visible at lower-abdomen/waist level in front of the body — relaxed, NOT touching the chest, NOT pressed against the side. BOTH arms and BOTH hands must be visible in the output. Frame waist-up; keep the same head size as the original portrait; do NOT zoom out to full body.',
+        'RIGHT arm raised, right index finger pointing straight up, all other right fingers naturally curled. LEFT arm relaxed, left hand visible at lower-abdomen level in front of the body — open, loose, fingers straight, NOT making any gesture or sign. BOTH hands MUST be visible in the output. Frame waist-up, same head size as original, do NOT zoom out.',
       stageInto: {
         prompt:
-          'Person smoothly raises right arm upward, extending index finger to point straight up at the sky. Slow, deliberate pointing motion. Left arm stays still at rest.',
-        negativePrompt: `sudden movement, multiple fingers pointing, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
-        duration: 2,
+          'Person makes one decisive raise of right arm, index finger pointing straight up. Single clean upward motion, does not repeat. Left arm stays still.',
+        negativePrompt: `repeated movement, double gesture, multiple fingers pointing, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
+        duration: 0.8,
       },
       stageHold: {
         prompt:
-          'Person speaking naturally to camera. Right arm raised high with index finger pointing straight up. Subtle head movement and natural blinking. Arm stays raised and completely still.',
+          'Person speaking naturally to camera. Right arm raised with index finger pointing straight up. Subtle natural head movement and blinking. Arm completely still.',
         negativePrompt: `arm dropping, hand lowering, arm movement, finger curling, ${HAND_NEGATIVE}`,
         duration: 3,
       },
       stageOut: {
         prompt:
-          'Person smoothly lowers right arm from pointing-up position back down to rest at their side. Slow, gradual, natural arm movement.',
-        negativePrompt: `sudden movement, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
-        duration: 2,
+          'Person swiftly lowers right arm from pointing-up position back down to resting at side — arm fully down by end of clip. Fast single downward sweep, arm reaches neutral resting position completely. Left arm stays still.',
+        negativePrompt: `repeated movement, double gesture, left arm moving, both hands moving, arm still raised, finger still pointing, ${HAND_NEGATIVE}`,
+        duration: 1.5,
       },
     },
+  },
+  {
+    index: 4,
+    label: 'Nói nhẹ',
+    prompt:
+      'Person speaking with energy and conviction. Pronounced head nod downward on stressed words. Upper body rocks forward and back with speech rhythm. Shoulders move naturally. Animated facial expressions, eyebrows raising and furrowing. Hands completely still at sides.',
+    negativePrompt: `arms raising, arms reaching, hand gestures, waving, pointing, arm movement, gesticulating, eyes wide open without blinking, ${BASE_NEGATIVE}`,
+    duration: 2,
+    seedOffset: 40,
+    hasArm: false,
+    useEndImage: true,
   },
 ];
 
 export const QUICK_SCENE = ALL_SCENES[0];
-export const POSED_SCENE_INDICES = new Set([1, 3]);
+export const POSED_SCENE_INDICES = new Set([3]);

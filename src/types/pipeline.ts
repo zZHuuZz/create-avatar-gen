@@ -16,6 +16,7 @@ export interface PoseStageConfig {
   prompt: string;
   negativePrompt: string;
   duration: number;
+  guidanceScale?: number; // overrides the route default for this stage
 }
 
 export interface PoseConfig {
@@ -79,6 +80,7 @@ export interface GeneratePosedVideoRequest {
   frampackUrl: string;
   baseSeed: number;
   sceneIndex: number;
+  stageOnly?: StageKey;      // if set, only run this one stage (skips the others)
 }
 
 export type SSEEvent =

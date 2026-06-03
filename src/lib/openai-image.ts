@@ -73,6 +73,10 @@ export async function normalizePose(
     `HAND RULE:\n` +
     `• If portrait.png shows the subject's hands: preserve their skin tone and proportions exactly.\n` +
     `• If portrait.png does NOT show hands: generate hands that match the subject's visible skin tone and body proportions — never borrow hand color or style from the pose guide.\n\n` +
+    `RESTING ARM RULE (critical — always apply):\n` +
+    `• Any arm/hand that is NOT explicitly described as raised, gesturing, or active must hang STRAIGHT DOWN at the person's side — naturally, like a person standing relaxed.\n` +
+    `• A resting hand must be FULLY OPEN and LOOSE: fingers straight or very slightly curved, NO bent fingers, NO pinched fingers, NO sign language shapes, NO clawing, NO tension, NO deliberate hand pose of any kind.\n` +
+    `• Do NOT invent any gesture for a resting hand. Treat it as invisible — it just hangs there.\n\n` +
     `FRAMING (critical):\n` +
     `• Keep the same head size and portrait crop as portrait.png — waist-up, not full body.\n` +
     `• Do NOT zoom out to show the full body or show the person standing at a distance.\n` +
