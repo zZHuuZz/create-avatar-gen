@@ -5,19 +5,14 @@ function stripDataUrl(base64: string): string {
   return base64.replace(/^data:[^,]+,/, '');
 }
 
-// Blur the top 30% of the reference image so Gemini cannot copy the reference person's face
-// Keeps the full image composition intact so arm/hand positions stay in correct context
-async function blurFaceInReference(buf: Buffer): Promise<Buffer> {
-  const { width = 800, height = 1280 } = await sharp(buf).metadata();
-  const faceHeight = Math.floor(height * 0.30);
-
-  const blurredFace = await sharp(buf)
-    .extract({ left: 0, top: 0, width, height: faceHeight })
-    .blur(30)
-    .toBuffer();
-
+// Strip ALL appearance info from the reference image so Gemini cannot copy anything visual.
+// Grayscale removes all color (clothing, skin tone). Heavy blur removes fine detail (face, textures).
+// What remains: only gross body geometry — where limbs are, arm angles, hand positions.
+async function prepareReferenceForPose(buf: Buffer): Promise<Buffer> {
   return sharp(buf)
-    .composite([{ input: blurredFace, left: 0, top: 0 }])
+    .grayscale()
+    .blur(15)
+    .jpeg({ quality: 85 })
     .toBuffer();
 }
 
@@ -27,7 +22,6 @@ export async function generatePoseImage(
   subjectBase64: string,
   posePrompt: string,
   apiKey: string,
-  options: { size?: string } = {}
 ): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -51,7 +45,7 @@ export async function normalizePose(
   subjectBase64: string,
   referenceImageBuffer: Buffer,
   apiKey: string,
-  options: { size?: string; poseHint?: string; referenceFileName?: string } = {}
+  options: { poseHint?: string } = {}
 ): Promise<string> {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -59,22 +53,38 @@ export async function normalizePose(
     generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as any,
   });
 
-  const subjectName = 'portrait.png';
-  const refName = options.referenceFileName ?? 'reference.jpg';
-  const hint = options.poseHint ? ` ${options.poseHint}` : '';
-  const prompt =
-    `Maintain the same background, clothing and facial features from ${subjectName}.\n` +
-    `ONLY change the hand and arm pose to imitate that of ${refName}.\n` +
-    `REQUIRED: Both arms and both hands must always be fully visible in the output. Never show only one arm.${hint}`;
+  const hint = options.poseHint ? `\nPose detail: ${options.poseHint}` : '';
 
-  // Blur the face region of the reference so Gemini cannot copy it onto the subject
-  const blurredRef = await blurFaceInReference(referenceImageBuffer);
+  // Strip all appearance info from reference — result can only convey body geometry
+  const poseGuide = await prepareReferenceForPose(referenceImageBuffer);
+
+  const prompt =
+    `TASK: Reproduce portrait.png with a new arm/hand pose.\n\n` +
+    `PRESERVE EXACTLY from portrait.png (do not change anything):\n` +
+    `• Face, hair, and all facial features\n` +
+    `• Clothing — color, style, and every detail\n` +
+    `• Background and environment\n` +
+    `• Skin tone and body proportions\n\n` +
+    `CHANGE ONLY: arm positions, shoulder angles, and hand placement.\n\n` +
+    `POSE GUIDE (pose-guide.jpg):\n` +
+    `This is a grayscale blurred silhouette — it is NOT a person to copy from.\n` +
+    `Use it ONLY to read where the arms and hands are positioned geometrically.\n` +
+    `Copy NOTHING visual from it: no colors, no skin, no clothing, no face, no background.\n\n` +
+    `HAND RULE:\n` +
+    `• If portrait.png shows the subject's hands: preserve their skin tone and proportions exactly.\n` +
+    `• If portrait.png does NOT show hands: generate hands that match the subject's visible skin tone and body proportions — never borrow hand color or style from the pose guide.\n\n` +
+    `FRAMING (critical):\n` +
+    `• Keep the same head size and portrait crop as portrait.png — waist-up, not full body.\n` +
+    `• Do NOT zoom out to show the full body or show the person standing at a distance.\n` +
+    `• Both arms and both hands required by the pose MUST be fully visible — never crop a hand, wrist, or forearm.\n` +
+    `• You may widen or slightly adjust the frame ONLY as much as needed to show both arms; never more.` +
+    hint;
 
   const result = await model.generateContent([
-    { text: `${subjectName}:` },
+    { text: 'portrait.png — this person\'s complete appearance must be preserved:' },
     { inlineData: { data: stripDataUrl(subjectBase64), mimeType: 'image/png' } },
-    { text: `${refName}:` },
-    { inlineData: { data: blurredRef.toString('base64'), mimeType: 'image/jpeg' } },
+    { text: 'pose-guide.jpg — use ONLY for arm/hand position geometry, copy nothing visual:' },
+    { inlineData: { data: poseGuide.toString('base64'), mimeType: 'image/jpeg' } },
     { text: prompt },
   ]);
 

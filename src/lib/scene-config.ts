@@ -75,7 +75,7 @@ export const ALL_SCENES: SceneConfig[] = [
     poseConfig: {
       referenceImageFile: 'reference-pointup.jpg',
       posePrompt:
-        'Right arm raised, right index finger pointing straight up, all other fingers curled. Left arm bent at elbow, left hand resting at chest level — both arms must appear in the same frame. The output must be wide enough to show both arms fully. Never crop either hand or arm.',
+        'Right arm raised, right index finger pointing straight up, all other fingers naturally curled. Left arm bent at elbow, left forearm angled slightly forward, left hand visible at lower-abdomen/waist level in front of the body — relaxed, NOT touching the chest, NOT pressed against the side. BOTH arms and BOTH hands must be visible in the output. Frame waist-up; keep the same head size as the original portrait; do NOT zoom out to full body.',
       stageInto: {
         prompt:
           'Person smoothly raises right arm upward, extending index finger to point straight up at the sky. Slow, deliberate pointing motion. Left arm stays still at rest.',

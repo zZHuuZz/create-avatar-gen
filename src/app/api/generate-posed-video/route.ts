@@ -59,7 +59,7 @@ export async function POST(request: Request) {
             if (poseConfig.referenceImageFile) {
               const refPath = path.join(process.cwd(), 'public', 'poses', poseConfig.referenceImageFile);
               const refBuffer = fs.readFileSync(refPath);
-              poseImageBase64 = await normalizePose(imageBase64, refBuffer, openaiKey, { poseHint: poseConfig.posePrompt, referenceFileName: poseConfig.referenceImageFile });
+              poseImageBase64 = await normalizePose(imageBase64, refBuffer, openaiKey, { poseHint: poseConfig.posePrompt });
             } else {
               poseImageBase64 = await generatePoseImage(imageBase64, poseConfig.posePrompt, openaiKey);
             }

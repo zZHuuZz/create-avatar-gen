@@ -41,7 +41,6 @@ export async function POST(request: Request) {
 
   const img = await normalizePose(imageBase64, refBuf, key, {
     poseHint: scene.poseConfig.posePrompt,
-    referenceFileName: scene.poseConfig.referenceImageFile,
   });
 
   return Response.json({ image: img, step });

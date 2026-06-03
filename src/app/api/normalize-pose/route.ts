@@ -8,14 +8,14 @@ export const maxDuration = 180;
 const REFERENCE_IMAGE_PATH = path.join(process.cwd(), 'public/poses/reference.jpg');
 
 export async function POST(request: Request) {
-  let body: { imageBase64: string; size?: '1024x1024' | '1024x1536' | '1536x1024' };
+  let body: { imageBase64: string };
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { imageBase64, size } = body;
+  const { imageBase64 } = body;
   if (!imageBase64) return Response.json({ error: 'imageBase64 is required' }, { status: 400 });
 
   const key = process.env.GEMINI_API_KEY;
@@ -33,7 +33,6 @@ export async function POST(request: Request) {
   try {
     // Step 1: generate main avatar — clasped hands pose from reference.jpg
     const generated = await normalizePose(imageBase64, referenceImageBuffer, key, {
-      size,
       poseHint: 'Right hand gently holds left hand at waist level, fingers naturally interlocked — NOT a prayer or namaste pose. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
     });
 
@@ -45,9 +44,7 @@ export async function POST(request: Request) {
       const refBuf = fs.readFileSync(refPath);
       try {
         const pose = await normalizePose(imageBase64, refBuf, key, {
-          size,
           poseHint: scene.poseConfig!.posePrompt,
-          referenceFileName: scene.poseConfig!.referenceImageFile,
         });
         poseEntries.push({ sceneIndex: scene.index, img: pose });
       } catch (err) {

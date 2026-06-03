@@ -53,6 +53,8 @@ export default function Home() {
   const [generatedPoses, setGeneratedPoses] = useState<Record<number, string>>({});
   const [normalizing, setNormalizing] = useState(false);
   const [normalizeError, setNormalizeError] = useState<string | null>(null);
+  const [regeneratingAvatar, setRegeneratingAvatar] = useState(false);
+  const [regeneratingPoses, setRegeneratingPoses] = useState<Set<number>>(new Set());
   const [sceneMode, setSceneMode] = useState<'quick' | 'all'>('quick');
 
   const [scenes, setScenes] = useState<SceneResult[]>([]);
@@ -99,6 +101,46 @@ export default function Home() {
       setNormalizeError(err instanceof Error ? err.message : String(err));
     } finally {
       setNormalizing(false);
+    }
+  }
+
+  async function handleRegenerateAvatar() {
+    if (!portrait) return;
+    setRegeneratingAvatar(true);
+    try {
+      const res = await fetch('/api/dev-image-gen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: portrait, step: 'avatar' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      setGenerated(data.image);
+    } catch (err) {
+      setNormalizeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegeneratingAvatar(false);
+    }
+  }
+
+  async function handleRegeneratePose(sceneIndex: number) {
+    if (!portrait) return;
+    const step = sceneIndex === 1 ? 'pose-1' : sceneIndex === 3 ? 'pose-3' : null;
+    if (!step) return;
+    setRegeneratingPoses((prev) => new Set([...prev, sceneIndex]));
+    try {
+      const res = await fetch('/api/dev-image-gen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: portrait, step }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Failed');
+      setGeneratedPoses((prev) => ({ ...prev, [sceneIndex]: data.image }));
+    } catch (err) {
+      setNormalizeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegeneratingPoses((prev) => { const next = new Set(prev); next.delete(sceneIndex); return next; });
     }
   }
 
@@ -489,8 +531,12 @@ export default function Home() {
                   generated={generated}
                   generatedPoses={generatedPoses}
                   onRegenerate={handleRegenerate}
+                  onRegenerateAvatar={handleRegenerateAvatar}
+                  onRegeneratePose={handleRegeneratePose}
                   onMakeVideo={handleGenerateVideo}
                   generating={normalizing}
+                  regeneratingAvatar={regeneratingAvatar}
+                  regeneratingPoses={regeneratingPoses}
                 />
               </Section>
               {normalizeError && (
