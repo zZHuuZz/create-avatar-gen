@@ -17,7 +17,7 @@ Trả về JSON: {"matches": ["từ nối 1", "từ nối 2"]}
 Chỉ trả về JSON, không có gì khác.`;
 
 const ENUMERATION_RE = /^(thứ\s+(nhất|hai|ba|tư|năm|sáu|bảy|tám|chín|mười)|đầu tiên|cuối cùng|tiếp theo|kế tiếp|hơn nữa|ngoài ra|bên cạnh đó|không chỉ vậy|đồng thời|song song đó)$/i;
-const EMPHASIS_RE = /^(ví dụ(?: như)?|chẳng hạn(?: như)?|thậm chí|đặc biệt(?: là)?|nhất là|chính là|quan trọng(?: hơn)?)$/i;
+const EMPHASIS_RE = /^(ví dụ(?: như)?|chẳng hạn(?: như)?|đặc biệt(?: là)?|nhất là|chính là|quan trọng(?: hơn)?)$/i;
 
 const strip = (s: string) => s.toLowerCase().replace(/[\p{P}\p{S}]+/gu, '').trim();
 
@@ -32,7 +32,11 @@ const GUARANTEED_TU_NOI = [
   'nhưng', 'tuy nhiên', 'thế nhưng', 'vậy mà', 'ngược lại', 'trái lại', 'dù vậy',
   'vì vậy', 'do đó', 'cho nên', 'bởi vì', 'vì thế', 'kết quả là',
   'thay vì', 'mặc dù', 'tuy rằng', 'thật ra', 'thực ra', 'tức là', 'có nghĩa là',
-  'bao gồm', 'gồm có',
+  'nói cách khác', 'bao gồm', 'gồm có',
+  // Causal connectors (result / thanks to)
+  'nhờ đó', 'nhờ vậy', 'nhờ thế',
+  // Sequence
+  'sau đó', 'tiếp đó',
   // Enumeration (all map to 1-hand via ENUMERATION_RE)
   'đầu tiên', 'tiếp theo', 'kế tiếp', 'cuối cùng',
   'thứ nhất', 'thứ hai', 'thứ ba', 'thứ tư', 'thứ năm', 'thứ sáu', 'thứ bảy',
@@ -59,7 +63,9 @@ function classifyPhrase(phrase: string): string {
 // Phrases that only function as từ nối when clause-initial.
 // Reject matches where the preceding word has no punctuation — it's likely embedded in a phrase
 // (e.g. "nhanh hơn nữa" = "even faster", not "furthermore").
-const CLAUSE_INITIAL_ONLY = new Set(['hơn nữa', 'nhất là']);
+// "vậy" mid-phrase = "như vậy" (like that), "đến vậy" (to that extent) — not connectors.
+// Only clause-initial "Vậy..." (meaning "So...") qualifies.
+const CLAUSE_INITIAL_ONLY = new Set(['hơn nữa', 'nhất là', 'vậy']);
 
 function findAllOccurrences(phrase: string, words: WordToken[]): number[][] {
   const phraseTokens = phrase.trim().split(/\s+/).map(strip).filter(Boolean);
@@ -97,9 +103,12 @@ export async function POST(request: Request) {
   let fullText: string;
   let audioDuration: number;
   try {
+    // Sanitize filename — spaces/special chars before the extension cause Whisper to reject
+    const rawExt = audioFile.name.trim().split('.').pop()?.trim().toLowerCase() ?? 'mp3';
+    const safeExt = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm'].includes(rawExt) ? rawExt : 'mp3';
     const file = await toFile(
       Buffer.from(await audioFile.arrayBuffer()),
-      audioFile.name,
+      `audio.${safeExt}`,
       { type: audioFile.type || 'audio/mpeg' }
     );
     const transcription = await (client.audio.transcriptions as any).create({
@@ -228,17 +237,29 @@ export async function POST(request: Request) {
   // Emphatic/contrastive Vietnamese patterns that signal a strong or interesting point.
   const SECONDARY_HAND_WORDS = [
     // Negation / correction
-    'chứ không phải', 'chứ không', 'không phải là', 'không hề', 'không thể nào',
+    'chứ không phải', 'chứ không', 'không phải là', 'không phải', 'không hề', 'không thể nào',
     // Passive emphasis (something happens to subject)
     'sẽ bị', 'đã bị', 'bị',
+    // Strong assertion — "chính là" is one of the most common emphasis markers in Vietnamese
+    'đây chính là', 'đó chính là', 'chính là',
+    // Contrastive / reveal
+    'mà là', 'mà thật ra', 'hóa ra là',
     // Strong assertion / possibility
     'hoàn toàn có thể', 'hoàn toàn', 'chắc chắn', 'nhất định',
     // Reality / clarity
     'thực chất', 'thực sự', 'thật sự',
-    // Intensity
-    'cực kỳ', 'vô cùng', 'tuyệt đối', 'luôn luôn',
-    // Attention
-    'chú ý', 'lưu ý', 'đặc biệt',
+    // Intensity / scale
+    'cực kỳ', 'vô cùng', 'tuyệt đối', 'luôn luôn', 'khổng lồ', 'cực lớn', 'siêu nhỏ',
+    // Speed / immediacy
+    'lập tức', 'ngay lập tức', 'trong chớp mắt',
+    // Ease / result
+    'dễ dàng', 'một cách dễ dàng',
+    // Approximation / scope
+    'hầu như', 'gần như',
+    // Engagement
+    'tưởng tượng', 'hãy tưởng tượng',
+    // Attention / surprise
+    'chú ý', 'lưu ý', 'đặc biệt', 'thú vị', 'chưa hết',
   ];
   const seenSecondary = new Set<number>();
   const secondaryMarkers: { start: number; end: number; word: string; sceneKey: string }[] = [];
@@ -258,5 +279,24 @@ export async function POST(request: Request) {
   }
   secondaryMarkers.sort((a, b) => a.start - b.start);
 
-  return Response.json({ transcript: fullText, markers, secondaryMarkers, audioDuration });
+  // 6. L3: very common clause-boundary words — only used to fill dead zones with no L1/L2.
+  const L3_HAND_WORDS = ['và', 'thì', 'khi', 'nếu', 'để', 'cũng', 'vì', 'với'];
+  const seenL3 = new Set<number>();
+  const tertiaryMarkers: { start: number; end: number; word: string }[] = [];
+  for (const phrase of L3_HAND_WORDS) {
+    for (const group of findAllOccurrences(phrase, words)) {
+      const startIdx = group[0];
+      if (!seenStart.has(startIdx) && !seenSecondary.has(startIdx) && !seenL3.has(startIdx)) {
+        seenL3.add(startIdx);
+        tertiaryMarkers.push({
+          start: words[startIdx].start,
+          end: words[group[group.length - 1]].end,
+          word: group.map(i => words[i].word).join(' '),
+        });
+      }
+    }
+  }
+  tertiaryMarkers.sort((a, b) => a.start - b.start);
+
+  return Response.json({ transcript: fullText, markers, secondaryMarkers, tertiaryMarkers, audioDuration });
 }

@@ -434,11 +434,11 @@ export default function Home() {
   const handleMergePosedScene = useCallback(async (sceneIndex: number) => {
     const ps = posedScenes.find((r) => r.sceneIndex === sceneIndex);
     if (!ps) return;
-    const ORDER: StageKey[] = ['into', 'hold', 'out'];
+    const ORDER = (sceneIndex === 3 ? ['into', 'hold'] : ['into', 'hold', 'out']) as StageKey[];
     const donestages = ORDER
       .map((key) => ps.stages.find((s) => s.key === key))
       .filter((s): s is NonNullable<typeof s> => !!s && s.status === 'done' && !!s.jobId && !!s.frampackUrl);
-    if (donestages.length !== 3) return;
+    if (donestages.length !== ORDER.length) return;
 
     setPosedScenes((prev) =>
       prev.map((r) => r.sceneIndex === sceneIndex ? { ...r, merging: true, mergeError: undefined } : r)

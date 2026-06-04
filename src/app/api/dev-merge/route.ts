@@ -50,6 +50,23 @@ export async function POST(request: Request) {
       return Response.json({ error: 'All clips are too short to merge' }, { status: 400 });
     }
 
+    // Probe actual duration of each source video — clips play for min(requested, actual), no looping.
+    const srcActualDurs = new Map<string, number>();
+    await Promise.all(
+      ([...new Set(validSequence.map(s => s.sceneIndex))] as number[]).map(async (idx) => {
+        const p = videoPaths[idx];
+        if (!p) return;
+        try {
+          const { stdout } = await execAsync(
+            `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${p}"`,
+            { timeout: 10_000 }
+          );
+          const d = parseFloat(stdout.trim());
+          if (!isNaN(d)) srcActualDurs.set(String(idx), d);
+        } catch { /* fall back to requested duration */ }
+      })
+    );
+
     // Build per-segment clips with deflicker applied to smooth AI-video temporal noise
     const segPaths: string[] = [];
     for (let i = 0; i < validSequence.length; i++) {
@@ -58,10 +75,15 @@ export async function POST(request: Request) {
       if (!srcPath) {
         return Response.json({ error: `No video uploaded for scene ${sceneIndex}` }, { status: 400 });
       }
+      const srcActualDur = srcActualDurs.get(String(sceneIndex)) ?? 0;
       const segPath = join(tmpDir, `seg_${i}.mp4`);
-      // deflicker smooths frame-to-frame brightness variance common in AI-generated video
+      let vf = 'deflicker=size=3:mode=am';
+      if (srcActualDur > 0 && srcActualDur < duration - 0.02) {
+        const padDur = parseFloat((duration - srcActualDur).toFixed(3));
+        vf += `,tpad=stop_mode=clone:stop_duration=${padDur}`;
+      }
       await execAsync(
-        `ffmpeg -y -stream_loop -1 -i "${srcPath}" -t ${duration} -vf "deflicker=size=3:mode=am" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
+        `ffmpeg -y -i "${srcPath}" -t ${duration} -vf "${vf}" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
         { timeout: 60_000 }
       );
       segPaths.push(segPath);

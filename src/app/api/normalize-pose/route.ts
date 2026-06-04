@@ -36,14 +36,15 @@ export async function POST(request: Request) {
       poseHint: 'Right hand gently holds left hand at waist level, fingers naturally interlocked — NOT a prayer or namaste pose. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
     });
 
-    // Step 2: generate each pose from the ORIGINAL portrait (not the generated avatar)
-    // so poses don't inherit the clasped-hands from step 1
+    // Step 2: generate each pose FROM the avatar so background is guaranteed identical.
+    // The blurred grayscale pose-guide carries zero visual info from the avatar,
+    // so the clasped-hands do NOT bleed into the pose output.
     const poseEntries: ({ sceneIndex: number; img: string } | null)[] = [];
     for (const scene of posedScenes) {
       const refPath = path.join(process.cwd(), 'public', 'poses', scene.poseConfig!.referenceImageFile!);
       const refBuf = fs.readFileSync(refPath);
       try {
-        const pose = await normalizePose(imageBase64, refBuf, key, {
+        const pose = await normalizePose(generated, refBuf, key, {
           poseHint: scene.poseConfig!.posePrompt,
         });
         poseEntries.push({ sceneIndex: scene.index, img: pose });

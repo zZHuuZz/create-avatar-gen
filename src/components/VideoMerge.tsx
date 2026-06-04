@@ -16,7 +16,7 @@ interface SequenceItem {
   duration: number;
   sceneIndex: number;
   triggerWord?: string;
-  level?: 1 | 2;
+  level?: 1 | 2 | 3;
 }
 
 interface AnalysisMarker {
@@ -119,8 +119,8 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
   function getGestureTotalDuration(sceneIndex: number): number {
     if (sceneIndex === 3) {
-      // +2.0 for the talking delay before the gesture fires
-      return 2.0 + getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold') + getStageDuration(sceneIndex, 'out');
+      // +2.0 for the talking delay; stageOut omitted — cut directly after hold
+      return 2.0 + getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold');
     }
     return getClipDuration(sceneIndex);
   }
@@ -168,7 +168,8 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
   function addAllPosedStages(ps: PosedSceneResult) {
     const items: SequenceItem[] = [];
-    for (const key of ['into', 'hold', 'out'] as StageKey[]) {
+    const stageKeys = (ps.sceneIndex === 3 ? ['into', 'hold'] : ['into', 'hold', 'out']) as StageKey[];
+    for (const key of stageKeys) {
       const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
       if (!stage?.jobId || !stage.frampackUrl) continue;
       items.push({
@@ -223,6 +224,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
       const rawMarkers: AnalysisMarker[] = data.markers ?? [];
       const secondaryMarkersData: { start: number; end: number; word: string }[] = data.secondaryMarkers ?? [];
+      const tertiaryMarkersData: { start: number; end: number; word: string }[] = data.tertiaryMarkers ?? [];
       setTranscript(data.transcript ?? '');
       setMarkers(rawMarkers);
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
@@ -302,29 +304,66 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
       // Fill a gap: insert 1-hand clips at secondary marker timestamps,
       // and as a fallback insert one at 1/3 point for any gap longer than 3s.
+      const L3_INTERVAL = 5; // seconds between L3 gestures in a dead zone
+
+      // Fill a sub-gap [subStart, subEnd) with L3 word-triggered gestures.
+      // Uses tertiaryMarkersData word timestamps — only fires when words land in this zone.
+      // Enforces L3_INTERVAL minimum spacing so dense words (like "và") don't cluster.
+      function fillSubGapL3(subStart: number, subEnd: number) {
+        const available = subEnd - subStart;
+        if (available <= 0) return;
+        if (handFillerPool.length === 0) { pushNoHand(available); return; }
+        const inZone = tertiaryMarkersData.filter(m => m.start >= subStart && m.start < subEnd);
+        if (inZone.length === 0) { pushNoHand(available); return; }
+        let lpos = subStart;
+        let lastGestureEnd = -Infinity;
+        for (const tm of inZone) {
+          if (tm.start - lastGestureEnd < L3_INTERVAL) continue; // enforce min spacing
+          const scene = handFillerPool[noHandN % handFillerPool.length];
+          const handClipDur = getClipDuration(scene.index);
+          const latestFit = subEnd - handClipDur;
+          if (latestFit < lpos) break;
+          const handStart = Math.min(Math.max(lpos, tm.start), latestFit);
+          if (handStart > lpos) pushNoHand(handStart - lpos);
+          out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: handClipDur, sceneIndex: scene.index, triggerWord: tm.word, level: 3 });
+          noHandN++;
+          lpos = handStart + handClipDur;
+          lastGestureEnd = lpos;
+        }
+        if (lpos < subEnd) pushNoHand(subEnd - lpos);
+      }
+
       // idleAtEnd: reserve this many seconds at the end of the gap as no-hand (used before point-up)
       function fillGap(gapStartTime: number, gapDur: number, idleAtEnd = 0) {
         if (gapDur <= 0) return;
         if (handFillerPool.length === 0) { pushNoHand(gapDur); return; }
         const gapEnd = gapStartTime + gapDur;
-        const handZoneEnd = gapEnd - idleAtEnd; // hand clips only allowed before this
+        const handZoneEnd = gapEnd - idleAtEnd;
         const inGap = secondaryMarkersData.filter(m => m.start >= gapStartTime && m.start < Math.max(gapStartTime, handZoneEnd));
-        if (inGap.length === 0) { pushNoHand(gapDur); return; }
+
+        if (inGap.length === 0) {
+          // No L2 markers — fill entire hand-zone with L3, then idleAtEnd tail
+          fillSubGapL3(gapStartTime, handZoneEnd);
+          if (handZoneEnd < gapEnd) pushNoHand(gapEnd - handZoneEnd);
+          return;
+        }
 
         let pos = gapStartTime;
         for (const sm of inGap) {
-          const handClipDur = getClipDuration(handFillerPool[0].index);
-          const latestFit = handZoneEnd - handClipDur; // latest start where clip still fits fully
-          if (latestFit < pos) continue; // no room left even if shifted
-          // Place as close to word as possible; shift left if word is too close to handZoneEnd
-          const handStart = Math.min(Math.max(pos, sm.start), latestFit);
-          if (handStart > pos) pushNoHand(handStart - pos);
           const scene = handFillerPool[noHandN % handFillerPool.length];
+          const handClipDur = getClipDuration(scene.index);
+          const latestFit = handZoneEnd - handClipDur;
+          if (latestFit < pos) continue;
+          const handStart = Math.min(Math.max(pos, sm.start), latestFit);
+          // Sub-gap before this L2 marker — use L3 if large enough, otherwise idle
+          if (handStart > pos) fillSubGapL3(pos, handStart);
           out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: handClipDur, sceneIndex: scene.index, triggerWord: sm.word, level: 2 });
           noHandN++;
           pos = handStart + handClipDur;
         }
-        if (pos < gapEnd) pushNoHand(gapEnd - pos);
+        // Trailing sub-gap after last L2 — use L3 if large enough
+        if (pos < handZoneEnd) fillSubGapL3(pos, handZoneEnd);
+        if (handZoneEnd < gapEnd) pushNoHand(gapEnd - handZoneEnd);
       }
 
       function pushGestureClips(key: SceneKey, triggerWord?: string) {
@@ -332,12 +371,19 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         if (sceneIndex === 3) {
           const ps = posedScenes.find(p => p.sceneIndex === sceneIndex);
           if (!ps) return;
-          let first = true;
-          for (const stageKey of ['into', 'hold', 'out'] as StageKey[]) {
-            const stage = ps.stages.find(s => s.key === stageKey && s.status === 'done');
-            if (!stage?.jobId || !stage.frampackUrl) continue;
-            out.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[stageKey]}`, duration: getStageDuration(sceneIndex, stageKey), sceneIndex, ...(first ? { triggerWord, level: 1 as const } : {}) });
-            first = false;
+          if (ps.mergedVideoUrl) {
+            // Use pre-merged A+B as a single clip — same as dev route, no xfade mid-gesture
+            const totalDur = getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold');
+            out.push({ frampackUrl: `posed-${sceneIndex}`, jobId: `posed-${sceneIndex}`, label: ps.label, duration: totalDur, sceneIndex, triggerWord, level: 1 });
+          } else {
+            // Fallback: individual stages (pre-merge not yet complete)
+            let first = true;
+            for (const stageKey of ['into', 'hold'] as StageKey[]) {
+              const stage = ps.stages.find(s => s.key === stageKey && s.status === 'done');
+              if (!stage?.jobId || !stage.frampackUrl) continue;
+              out.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[stageKey]}`, duration: getStageDuration(sceneIndex, stageKey), sceneIndex, ...(first ? { triggerWord, level: 1 as const } : {}) });
+              first = false;
+            }
           }
         } else {
           const scene = sceneForIndex(sceneIndex);
@@ -346,11 +392,16 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         }
       }
 
+      // Each xfade transition overlaps clips by FADE_DUR (0.12s in merge-video route).
+      // With N clips before a gesture, the gesture appears N×0.12s earlier than intended.
+      // Compensate by shifting gestureStart forward by out.length × FADE_DUR.
+      const FADE_COMP = 0.12;
+
       for (let mi = 0; mi < finalMarkers.length; mi++) {
         const marker = finalMarkers[mi];
         const key = (marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand') as SceneKey;
         const gestureDur = getGestureTotalDuration(SCENE_KEY_MAP[key]);
-        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - getGestureLead(key));
+        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - getGestureLead(key) + out.length * FADE_COMP);
 
         if (mi > 0) {
           const gapDur = gestureStart - cursor;
@@ -378,7 +429,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
           const altIdx: number = item.sceneIndex === 1 ? 2 : 1;
           const alt = doneScenes.find(s => s.index === altIdx);
           if (alt) {
-            final.push({ ...item, frampackUrl: alt.frampackUrl!, jobId: alt.jobId!, label: alt.label, sceneIndex: alt.index });
+            final.push({ ...item, frampackUrl: alt.frampackUrl!, jobId: alt.jobId!, label: alt.label, sceneIndex: alt.index, duration: getClipDuration(alt.index) });
             lastHandIdx = altIdx; handStreak = 1;
           } else { final.push(item); }
         } else { final.push(item); }
@@ -407,6 +458,14 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       form.append('sequence', JSON.stringify(
         sequence.map(({ frampackUrl, jobId, label, duration }) => ({ frampackUrl, jobId, label, duration }))
       ));
+
+      // Upload pre-merged posed videos so the route can use them as single clips
+      for (const ps of posedScenes) {
+        if (ps.mergedVideoUrl) {
+          const blob = await fetch(ps.mergedVideoUrl).then(r => r.blob());
+          form.append(`posed_video_${ps.sceneIndex}`, blob, `posed_${ps.sceneIndex}.mp4`);
+        }
+      }
 
       const res = await fetch('/api/merge-video', { method: 'POST', body: form });
       if (!res.ok) {
@@ -522,7 +581,8 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
           {posedScenes.map((ps) => {
             const hasAny = ps.stages.some((s) => s.status === 'done');
             if (!hasAny) return null;
-            const hasAll = ps.stages.filter((s) => s.status === 'done').length === 3;
+            const expectedStages = ps.sceneIndex === 3 ? 2 : 3;
+            const hasAll = ps.stages.filter((s) => s.status === 'done').length >= expectedStages;
             return (
               <div key={ps.sceneIndex} className="flex gap-1">
                 {hasAll && (
@@ -531,7 +591,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
                     + {ps.label} (A+B+C)
                   </button>
                 )}
-                {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
+                {(ps.sceneIndex === 3 ? ['into', 'hold'] as StageKey[] : ['into', 'hold', 'out'] as StageKey[]).map((key) => {
                   const stage = ps.stages.find((s) => s.key === key && s.status === 'done');
                   if (!stage) return null;
                   return (
@@ -567,6 +627,11 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
                 )}
                 {item.level === 2 && item.triggerWord && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-medium shrink-0">L2 · "{item.triggerWord}"</span>
+                )}
+                {item.level === 3 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium shrink-0">
+                    {item.triggerWord ? `L3 · "${item.triggerWord}"` : 'L3'}
+                  </span>
                 )}
                 <span className="text-xs text-(--color-secondary) shrink-0">{fmt(item.duration)}</span>
                 <div className="flex gap-0.5 shrink-0">

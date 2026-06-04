@@ -40,6 +40,17 @@ export async function POST(request: Request) {
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
+    // 0. Save any pre-merged posed videos uploaded directly (e.g. point-up A+B concat)
+    const posedPaths = new Map<string, string>();
+    for (const [key, value] of formData.entries()) {
+      if (typeof key === 'string' && key.startsWith('posed_video_') && value instanceof File) {
+        const jobId = `posed-${key.replace('posed_video_', '')}`;
+        const p = join(tmpDir, `${jobId}.mp4`);
+        await fs.writeFile(p, Buffer.from(await (value as File).arrayBuffer()));
+        posedPaths.set(jobId, p);
+      }
+    }
+
     // 1. Resolve each unique clip from local cache (downloading from FramePack only if not
     // already cached). This prevents 404s when FramePack expires old job results.
     const clipPaths = new Map<string, string>();
@@ -47,6 +58,10 @@ export async function POST(request: Request) {
     const uniqueJobs = [...new Map(sequence.map(s => [s.jobId, s])).values()];
 
     await Promise.all(uniqueJobs.map(async (item) => {
+      if (posedPaths.has(item.jobId)) {
+        clipPaths.set(item.jobId, posedPaths.get(item.jobId)!);
+        return;
+      }
       const p = await getClipPath(item.jobId, item.frampackUrl);
       clipPaths.set(item.jobId, p);
       try {
@@ -59,22 +74,22 @@ export async function POST(request: Request) {
       } catch { /* fall back to config duration */ }
     }));
 
-    // 2. For each segment, trim/loop the source to the desired duration.
-    // Only use stream_loop when the source is shorter than requested (e.g. idle clips
-    // stretched to fill a gap). For posed clips (A/B/C), FramePack generates at ~8fps so
-    // the source duration already matches the config — no loop needed, no seam created.
+    // 2. Build segments at exactly the requested duration.
+    // If source is shorter (FramePack rounding at ~8fps), hold the last frame with tpad
+    // instead of looping from frame 0 — no snap-back seam, correct timeline.
     const segPaths: string[] = [];
     for (let i = 0; i < sequence.length; i++) {
       const item = sequence[i];
       const srcPath = clipPaths.get(item.jobId)!;
       const segPath = join(tmpDir, `seg_${i}.mp4`);
       const srcActualDur = clipActualDurations.get(item.jobId) ?? 0;
-      // In concat mode (posed A+B+C) never loop — use source as-is to avoid
-      // replaying frame 0 when the clip is a few ms short of the config duration.
-      const needsLoop = !useConcat && srcActualDur > 0 && item.duration > srcActualDur + 0.02;
-      const loopFlag = needsLoop ? '-stream_loop -1' : '';
+      let vf = 'deflicker=size=3:mode=am';
+      if (srcActualDur > 0 && srcActualDur < item.duration - 0.02) {
+        const padDur = parseFloat((item.duration - srcActualDur).toFixed(3));
+        vf += `,tpad=stop_mode=clone:stop_duration=${padDur}`;
+      }
       await execAsync(
-        `ffmpeg -y ${loopFlag} -i "${srcPath}" -t ${item.duration} -vf "deflicker=size=3:mode=am" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
+        `ffmpeg -y -i "${srcPath}" -t ${item.duration} -vf "${vf}" -c:v libx264 -pix_fmt yuv420p -an "${segPath}"`,
         { timeout: 60_000 }
       );
       segPaths.push(segPath);

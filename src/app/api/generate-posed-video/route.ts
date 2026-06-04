@@ -76,11 +76,14 @@ export async function POST(request: Request) {
         const seed = baseSeed ?? Math.floor(Math.random() * 1_000_000);
 
         const allStages: Array<{ key: StageKey; startImage: string; endImage: string; config: typeof poseConfig.stageInto; guidanceScale: number; steps: number }> = [
-          { key: 'into', startImage: imageBase64,      endImage: poseImageBase64, config: poseConfig.stageInto, guidanceScale: poseConfig.stageInto.guidanceScale ?? 7,  steps: 20 },
+          { key: 'into', startImage: imageBase64,      endImage: poseImageBase64, config: poseConfig.stageInto, guidanceScale: poseConfig.stageInto.guidanceScale ?? 7,  steps: 30 },
           { key: 'hold', startImage: poseImageBase64,  endImage: poseImageBase64, config: poseConfig.stageHold, guidanceScale: poseConfig.stageHold.guidanceScale ?? 7,  steps: 25 },
           { key: 'out',  startImage: poseImageBase64,  endImage: imageBase64,     config: poseConfig.stageOut,  guidanceScale: poseConfig.stageOut.guidanceScale  ?? 7,  steps: 20 },
         ];
-        const stages = stageOnly ? allStages.filter(s => s.key === stageOnly) : allStages;
+        // Point-up cuts directly after hold — no stageOut generated
+        const stages = stageOnly
+          ? allStages.filter(s => s.key === stageOnly)
+          : allStages.filter(s => !(sceneIndex === 3 && s.key === 'out'));
 
         for (const stage of stages) {
           if (abortController.signal.aborted) break;

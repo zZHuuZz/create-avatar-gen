@@ -20,14 +20,15 @@ const STAGE_LABELS: Record<StageKey, string> = {
 export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onRegenerateStage }: Props) {
   const mergeTriggered = useRef(false);
 
-  const allStagesDone = result.stages.length === 3 && result.stages.every((s) => s.status === 'done');
+  const activeStages = (result.sceneIndex === 3 ? ['into', 'hold'] : ['into', 'hold', 'out']) as StageKey[];
+  const allStagesDone = activeStages.every((k) => result.stages.find((s) => s.key === k)?.status === 'done');
 
   // Reset the guard whenever stages are no longer all done (retry resets stages to pending)
   useEffect(() => {
     if (!allStagesDone) mergeTriggered.current = false;
   }, [allStagesDone]);
 
-  // Auto-trigger merge once all 3 stages are done
+  // Auto-trigger merge once all active stages are done
   useEffect(() => {
     if (allStagesDone && !mergeTriggered.current && !result.merging && !result.mergedVideoUrl) {
       mergeTriggered.current = true;
@@ -87,9 +88,9 @@ export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onReg
             </div>
           </div>
 
-          {/* Stages A / B / C */}
+          {/* Stages */}
           <div className="flex-1 flex flex-col gap-2 justify-center">
-            {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
+            {activeStages.map((key) => {
               const stage = result.stages.find((s) => s.key === key);
               const status = stage?.status ?? 'pending';
               return (
@@ -137,8 +138,8 @@ export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onReg
 
         {/* Stage video previews */}
         {result.stages.some((s) => s.status === 'done') && (
-          <div className="grid grid-cols-3 gap-2">
-            {(['into', 'hold', 'out'] as StageKey[]).map((key) => {
+          <div className={`grid gap-2 ${activeStages.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+            {activeStages.map((key) => {
               const stage = result.stages.find((s) => s.key === key && s.status === 'done');
               if (!stage?.jobId || !stage.frampackUrl) return (
                 <div key={key} className="aspect-[9/16] rounded-lg bg-(--color-muted) flex items-center justify-center">
@@ -165,7 +166,7 @@ export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onReg
         {result.merging && (
           <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-(--color-muted)">
             <span className="w-4 h-4 border-2 border-(--color-primary) border-t-transparent rounded-full" style={{ animation: 'spin 0.8s linear infinite' }} />
-            <span className="text-sm text-(--color-secondary)">Đang ghép A+B+C...</span>
+            <span className="text-sm text-(--color-secondary)">Đang ghép {activeStages.map(k => STAGE_LABELS[k].split(' · ')[0]).join('+')}</span>
           </div>
         )}
 
@@ -177,7 +178,7 @@ export function PosedSceneCard({ result, onMerge, onRegenerate, onRemerge, onReg
 
         {result.mergedVideoUrl && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium text-(--color-secondary)">Merged (A+B+C)</span>
+            <span className="text-xs font-medium text-(--color-secondary)">Merged ({activeStages.map(k => STAGE_LABELS[k].split(' · ')[0]).join('+')})</span>
             <video src={result.mergedVideoUrl} controls loop className="w-full rounded-xl bg-black" style={{ maxHeight: '240px' }} />
             <div className="flex gap-2">
               <button onClick={downloadMerged} className="btn-neumorphic flex-1 py-2 text-sm">

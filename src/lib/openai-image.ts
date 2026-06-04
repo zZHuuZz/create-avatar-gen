@@ -5,11 +5,23 @@ function stripDataUrl(base64: string): string {
   return base64.replace(/^data:[^,]+,/, '');
 }
 
+// All images sent to Gemini are resized to this fixed canvas so output dimensions are always consistent.
+const STANDARD_W = 512;
+const STANDARD_H = 768;
+
+async function toStandardSize(buf: Buffer): Promise<Buffer> {
+  return sharp(buf)
+    .resize(STANDARD_W, STANDARD_H, { fit: 'cover', position: 'top' })
+    .png()
+    .toBuffer();
+}
+
 // Strip ALL appearance info from the reference image so Gemini cannot copy anything visual.
 // Grayscale removes all color (clothing, skin tone). Heavy blur removes fine detail (face, textures).
 // What remains: only gross body geometry — where limbs are, arm angles, hand positions.
 async function prepareReferenceForPose(buf: Buffer): Promise<Buffer> {
   return sharp(buf)
+    .resize(STANDARD_W, STANDARD_H, { fit: 'cover', position: 'top' })
     .grayscale()
     .blur(15)
     .jpeg({ quality: 85 })
@@ -29,16 +41,19 @@ export async function generatePoseImage(
     generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as any,
   });
 
+  const subjectBuf = await toStandardSize(Buffer.from(stripDataUrl(subjectBase64), 'base64'));
+
   const result = await model.generateContent([
     { text: 'Portrait photo (the subject):' },
-    { inlineData: { data: stripDataUrl(subjectBase64), mimeType: 'image/png' } },
+    { inlineData: { data: subjectBuf.toString('base64'), mimeType: 'image/png' } },
     { text: posePrompt },
   ]);
 
   const parts = result.response.candidates?.[0]?.content?.parts ?? [];
   const img = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
   if (!img?.inlineData?.data) throw new Error('Gemini returned no image data');
-  return `data:${img.inlineData.mimeType};base64,${img.inlineData.data}`;
+  const normalized = await toStandardSize(Buffer.from(img.inlineData.data, 'base64'));
+  return `data:image/png;base64,${normalized.toString('base64')}`;
 }
 
 export async function normalizePose(
@@ -55,6 +70,8 @@ export async function normalizePose(
 
   const hint = options.poseHint ? `\nPose detail: ${options.poseHint}` : '';
 
+  // Standardize subject to fixed canvas so output size is always consistent
+  const subjectBuf = await toStandardSize(Buffer.from(stripDataUrl(subjectBase64), 'base64'));
   // Strip all appearance info from reference — result can only convey body geometry
   const poseGuide = await prepareReferenceForPose(referenceImageBuffer);
 
@@ -86,7 +103,7 @@ export async function normalizePose(
 
   const result = await model.generateContent([
     { text: 'portrait.png — this person\'s complete appearance must be preserved:' },
-    { inlineData: { data: stripDataUrl(subjectBase64), mimeType: 'image/png' } },
+    { inlineData: { data: subjectBuf.toString('base64'), mimeType: 'image/png' } },
     { text: 'pose-guide.jpg — use ONLY for arm/hand position geometry, copy nothing visual:' },
     { inlineData: { data: poseGuide.toString('base64'), mimeType: 'image/jpeg' } },
     { text: prompt },
@@ -95,5 +112,6 @@ export async function normalizePose(
   const parts = result.response.candidates?.[0]?.content?.parts ?? [];
   const img = parts.find((p: any) => p.inlineData?.mimeType?.startsWith('image/'));
   if (!img?.inlineData?.data) throw new Error('Gemini returned no image data');
-  return `data:${img.inlineData.mimeType};base64,${img.inlineData.data}`;
+  const normalized = await toStandardSize(Buffer.from(img.inlineData.data, 'base64'));
+  return `data:image/png;base64,${normalized.toString('base64')}`;
 }

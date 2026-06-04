@@ -55,9 +55,10 @@ export const ALL_SCENES: SceneConfig[] = [
         'RIGHT arm raised, right index finger pointing straight up, all other right fingers naturally curled. LEFT arm relaxed, left hand visible at lower-abdomen level in front of the body — open, loose, fingers straight, NOT making any gesture or sign. BOTH hands MUST be visible in the output. Frame waist-up, same head size as original, do NOT zoom out.',
       stageInto: {
         prompt:
-          'Person makes one decisive raise of right arm, index finger pointing straight up. Single clean upward motion, does not repeat. Left arm stays still.',
-        negativePrompt: `repeated movement, double gesture, multiple fingers pointing, left arm moving, both hands moving, ${HAND_NEGATIVE}`,
-        duration: 0.8,
+          'Person slowly and smoothly raises right arm upward, index finger gradually extending to point straight up. Fluid continuous upward motion, natural and deliberate, no sudden jerks. Left arm stays completely still.',
+        negativePrompt: `repeated movement, double gesture, multiple fingers pointing, left arm moving, both hands moving, sudden movement, jerky motion, flickering, ${HAND_NEGATIVE}`,
+        duration: 1.5,
+        guidanceScale: 4,
       },
       stageHold: {
         prompt:

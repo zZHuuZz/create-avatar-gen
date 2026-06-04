@@ -29,7 +29,7 @@ interface SequenceItem {
   duration: number;
   key: SceneKey;
   triggerWord?: string;
-  level?: 1 | 2;
+  level?: 1 | 2 | 3;
 }
 
 interface Marker {
@@ -193,6 +193,7 @@ export default function DevPage() {
       setMarkers(markers);
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const secondaryMarkersData: { start: number; end: number; word: string }[] = data.secondaryMarkers ?? [];
+      const tertiaryMarkersData: { start: number; end: number; word: string }[] = data.tertiaryMarkers ?? [];
       const noHandPool = SCENES.filter((s) => NO_HAND_KEYS.has(s.key) && videos[s.index]);
       const noHandClipDur = noHandPool.length > 0 ? getClipDur(noHandPool[0].index, videoDurations) : 2;
       const handFillerPool = SCENES.filter((s) => !NO_HAND_KEYS.has(s.key) && s.key !== 'point-up' && videos[s.index]);
@@ -208,6 +209,34 @@ export default function DevPage() {
         return startN + count;
       }
 
+      const L3_INTERVAL = 5;
+
+      function fillSubGapL3(subStart: number, subEnd: number, startN: number): number {
+        const available = subEnd - subStart;
+        if (available <= 0) return startN;
+        if (handFillerPool.length === 0) return pushNoHand(available, startN);
+        const inZone = tertiaryMarkersData.filter(m => m.start >= subStart && m.start < subEnd);
+        if (inZone.length === 0) return pushNoHand(available, startN);
+        let n = startN;
+        let lpos = subStart;
+        let lastGestureEnd = -Infinity;
+        for (const tm of inZone) {
+          if (tm.start - lastGestureEnd < L3_INTERVAL) continue;
+          const handScene = handFillerPool[n % handFillerPool.length];
+          const handClipDur = getClipDur(handScene.index, videoDurations);
+          const latestFit = subEnd - handClipDur;
+          if (latestFit < lpos) break;
+          const handStart = Math.min(Math.max(lpos, tm.start), latestFit);
+          if (handStart > lpos) n = pushNoHand(handStart - lpos, n);
+          out.push({ sceneIndex: handScene.index, label: handScene.label, duration: handClipDur, key: handScene.key, triggerWord: tm.word, level: 3 });
+          n++;
+          lpos = handStart + handClipDur;
+          lastGestureEnd = lpos;
+        }
+        if (lpos < subEnd) n = pushNoHand(subEnd - lpos, n);
+        return n;
+      }
+
       // idleAtEnd: reserve this many seconds at the end of the gap as no-hand (used before point-up)
       function fillGap(gapStartTime: number, gapDur: number, startN: number, idleAtEnd = 0): number {
         if (gapDur <= 0) return startN;
@@ -215,7 +244,12 @@ export default function DevPage() {
         const gapEnd = gapStartTime + gapDur;
         const handZoneEnd = gapEnd - idleAtEnd;
         const inGap = secondaryMarkersData.filter(m => m.start >= gapStartTime && m.start < Math.max(gapStartTime, handZoneEnd));
-        if (inGap.length === 0) return pushNoHand(gapDur, startN);
+
+        if (inGap.length === 0) {
+          const n = fillSubGapL3(gapStartTime, handZoneEnd, startN);
+          return handZoneEnd < gapEnd ? pushNoHand(gapEnd - handZoneEnd, n) : n;
+        }
+
         let n = startN;
         let pos = gapStartTime;
         for (const sm of inGap) {
@@ -224,12 +258,13 @@ export default function DevPage() {
           const latestFit = handZoneEnd - handClipDur;
           if (latestFit < pos) continue;
           const handStart = Math.min(Math.max(pos, sm.start), latestFit);
-          if (handStart > pos) n = pushNoHand(handStart - pos, n);
+          if (handStart > pos) n = fillSubGapL3(pos, handStart, n);
           out.push({ sceneIndex: handScene.index, label: handScene.label, duration: handClipDur, key: handScene.key, triggerWord: sm.word, level: 2 });
           n++;
           pos = handStart + handClipDur;
         }
-        if (pos < gapEnd) n = pushNoHand(gapEnd - pos, n);
+        if (pos < handZoneEnd) n = fillSubGapL3(pos, handZoneEnd, n);
+        if (handZoneEnd < gapEnd) n = pushNoHand(gapEnd - handZoneEnd, n);
         return n;
       }
 
@@ -285,13 +320,14 @@ export default function DevPage() {
       const out: SequenceItem[] = [];
       let cursor = 0;
       let noHandN = 0;
+      const FADE_COMP = 0.12; // matches FADE_DUR in dev-merge route
 
       for (let mi = 0; mi < finalMarkers.length; mi++) {
         const marker = finalMarkers[mi];
         const key = (marker.sceneKey in SCENE_KEY_MAP ? marker.sceneKey : '2-hand') as SceneKey;
         const sceneIdx = SCENE_KEY_MAP[key];
         const gestureClipDur = getClipDur(sceneIdx, videoDurations);
-        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - getGestureLead(key));
+        const gestureStart = mi === 0 ? 0 : Math.max(cursor, marker.start - getGestureLead(key) + out.length * FADE_COMP);
 
         if (mi > 0) {
           const gapDur = gestureStart - cursor;
@@ -317,7 +353,7 @@ export default function DevPage() {
           const altIdx: number = item.sceneIndex === 1 ? 2 : 1;
           if (videos[altIdx]) {
             const altScene = SCENES.find(s => s.index === altIdx)!;
-            final.push({ ...item, sceneIndex: altIdx, label: altScene.label, key: altScene.key });
+            final.push({ ...item, sceneIndex: altIdx, label: altScene.label, key: altScene.key, duration: getClipDur(altIdx, videoDurations) });
             lastHandIdx = altIdx; handStreak = 1;
           } else { final.push(item); }
         } else { final.push(item); }
