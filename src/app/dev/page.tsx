@@ -6,7 +6,7 @@ const SCENES = [
   { index: 0, key: 'no-hand',    label: 'Chỉ nói, không đưa tay', color: 'bg-gray-100',   defaultDur: 2.0 },
   { index: 1, key: '1-hand',     label: '1 tay',                  color: 'bg-blue-50',    defaultDur: 2.0 },
   { index: 2, key: '2-hand',     label: '2 tay',                  color: 'bg-green-50',   defaultDur: 1.5 },
-  { index: 3, key: 'point-up',   label: 'Chỉ lên trời',           color: 'bg-yellow-50',  defaultDur: 4.8 },
+  { index: 3, key: 'point-up',   label: 'Chỉ vào cam',            color: 'bg-yellow-50',  defaultDur: 2.0 },
   { index: 4, key: 'talk-light', label: 'Nói nhẹ',                color: 'bg-purple-50',  defaultDur: 2.0 },
 ] as const;
 
@@ -18,8 +18,7 @@ const SCENE_KEY_MAP: Record<SceneKey, number> = {
 
 const NO_HAND_KEYS = new Set<SceneKey>(['no-hand', 'talk-light']);
 
-function getGestureLead(key: SceneKey): number {
-  if (key === 'point-up') return -2.0; // fires 2s after trigger word
+function getGestureLead(_key: SceneKey): number {
   return 0;
 }
 
@@ -196,7 +195,7 @@ export default function DevPage() {
       const tertiaryMarkersData: { start: number; end: number; word: string }[] = data.tertiaryMarkers ?? [];
       const noHandPool = SCENES.filter((s) => NO_HAND_KEYS.has(s.key) && videos[s.index]);
       const noHandClipDur = noHandPool.length > 0 ? getClipDur(noHandPool[0].index, videoDurations) : 2;
-      const handFillerPool = SCENES.filter((s) => !NO_HAND_KEYS.has(s.key) && s.key !== 'point-up' && videos[s.index]);
+      const handFillerPool = SCENES.filter((s) => !NO_HAND_KEYS.has(s.key) && videos[s.index]);
 
       function pushNoHand(duration: number, startN: number): number {
         if (noHandPool.length === 0 || duration < 0.5) return startN;
@@ -272,7 +271,7 @@ export default function DevPage() {
       const resolvedMarkers = markers.reduce<Marker[]>((acc, curr) => {
         if (!acc.length) return [curr];
         const prev = acc[acc.length - 1];
-        const prevGestureDur = getClipDur(SCENE_KEY_MAP[prev.sceneKey], videoDurations) + (prev.sceneKey === 'point-up' ? 2.0 : 0);
+        const prevGestureDur = getClipDur(SCENE_KEY_MAP[prev.sceneKey], videoDurations);
         const prevAnchor = acc.length === 1 ? 0 : prev.start;
         if (curr.start < prevAnchor + prevGestureDur) {
           const currIsPointUp = curr.sceneKey === 'point-up';
@@ -331,7 +330,7 @@ export default function DevPage() {
 
         if (mi > 0) {
           const gapDur = gestureStart - cursor;
-          noHandN = fillGap(cursor, gapDur, noHandN, key === 'point-up' ? noHandClipDur : 0);
+          noHandN = fillGap(cursor, gapDur, noHandN);
         }
 
         const scene = SCENES.find((s) => s.index === sceneIdx)!;
@@ -339,13 +338,13 @@ export default function DevPage() {
         cursor = gestureStart + gestureClipDur;
       }
 
-      noHandN = fillGap(cursor, totalAudioDur - cursor, noHandN);
+      const xfadeCompensation = out.length * FADE_COMP;
+      noHandN = fillGap(cursor, totalAudioDur + 1.0 + xfadeCompensation - cursor, noHandN);
       // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
       let lastHandIdx: number | null = null;
       let handStreak = 0;
       const final: SequenceItem[] = [];
       for (const item of out) {
-        if (item.sceneIndex === 3) { lastHandIdx = null; handStreak = 0; final.push(item); continue; }
         const isHand = !NO_HAND_KEYS.has(item.key);
         if (!isHand) { final.push(item); continue; }
         if (item.sceneIndex === lastHandIdx) { handStreak++; } else { lastHandIdx = item.sceneIndex; handStreak = 1; }

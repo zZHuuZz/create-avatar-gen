@@ -76,13 +76,17 @@ export async function normalizePose(
   const poseGuide = await prepareReferenceForPose(referenceImageBuffer);
 
   const prompt =
-    `TASK: Reproduce portrait.png with a new arm/hand pose.\n\n` +
-    `PRESERVE EXACTLY from portrait.png (do not change anything):\n` +
-    `• Face, hair, and all facial features\n` +
+    `TASK: Reproduce portrait.png with a new arm/hand pose, facing directly at the camera.\n\n` +
+    `FACE DIRECTION (critical — always apply):\n` +
+    `• The subject MUST face directly into the camera — eyes looking straight ahead, head pointing forward.\n` +
+    `• If portrait.png shows the subject looking to the side or at an angle, rotate the head/face so they look straight at the camera in the output.\n` +
+    `• This is the most important required change; do not skip it.\n\n` +
+    `PRESERVE EXACTLY from portrait.png (do not change anything except what is listed under CHANGE):\n` +
+    `• Face appearance — features, hair, skin tone (NOT the direction of gaze or head angle)\n` +
     `• Clothing — color, style, and every detail\n` +
     `• Background and environment\n` +
-    `• Skin tone and body proportions\n\n` +
-    `CHANGE ONLY: arm positions, shoulder angles, and hand placement.\n\n` +
+    `• Body proportions\n\n` +
+    `CHANGE: arm positions, shoulder angles, hand placement, AND head/gaze direction (must face forward).\n\n` +
     `POSE GUIDE (pose-guide.jpg):\n` +
     `This is a grayscale blurred silhouette — it is NOT a person to copy from.\n` +
     `Use it ONLY to read where the arms and hands are positioned geometrically.\n` +

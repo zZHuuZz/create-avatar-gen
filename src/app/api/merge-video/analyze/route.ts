@@ -1,4 +1,12 @@
 import OpenAI, { toFile } from 'openai';
+import { exec } from 'child_process';
+import { promises as fs } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export const maxDuration = 120;
 
@@ -17,7 +25,8 @@ Trả về JSON: {"matches": ["từ nối 1", "từ nối 2"]}
 Chỉ trả về JSON, không có gì khác.`;
 
 const ENUMERATION_RE = /^(thứ\s+(nhất|hai|ba|tư|năm|sáu|bảy|tám|chín|mười)|đầu tiên|cuối cùng|tiếp theo|kế tiếp|hơn nữa|ngoài ra|bên cạnh đó|không chỉ vậy|đồng thời|song song đó)$/i;
-const EMPHASIS_RE = /^(ví dụ(?: như)?|chẳng hạn(?: như)?|đặc biệt(?: là)?|nhất là|chính là|quan trọng(?: hơn)?)$/i;
+// Only words that genuinely INTRODUCE examples or a specific highlighted item → point-up
+const EMPHASIS_RE = /^(ví dụ(?: như)?|chẳng hạn(?: như)?)$/i;
 
 const strip = (s: string) => s.toLowerCase().replace(/[\p{P}\p{S}]+/gu, '').trim();
 
@@ -103,14 +112,22 @@ export async function POST(request: Request) {
   let fullText: string;
   let audioDuration: number;
   try {
-    // Sanitize filename — spaces/special chars before the extension cause Whisper to reject
-    const rawExt = audioFile.name.trim().split('.').pop()?.trim().toLowerCase() ?? 'mp3';
-    const safeExt = ['flac', 'm4a', 'mp3', 'mp4', 'mpeg', 'mpga', 'oga', 'ogg', 'wav', 'webm'].includes(rawExt) ? rawExt : 'mp3';
-    const file = await toFile(
-      Buffer.from(await audioFile.arrayBuffer()),
-      `audio.${safeExt}`,
-      { type: audioFile.type || 'audio/mpeg' }
+    // Transcode to WAV via FFmpeg before sending to Whisper.
+    // Files from TikTok downloaders (tiker.io etc.) are often AAC/M4A with a .mp3 extension
+    // which Whisper's format detection rejects. FFmpeg normalises any container/codec.
+    const tmpDir = join(tmpdir(), `whisper-${randomUUID()}`);
+    await fs.mkdir(tmpDir, { recursive: true });
+    const inputPath = join(tmpDir, 'input.bin');
+    const wavPath = join(tmpDir, 'audio.wav');
+    await fs.writeFile(inputPath, Buffer.from(await audioFile.arrayBuffer()));
+    await execAsync(
+      `ffmpeg -y -i "${inputPath}" -ar 16000 -ac 1 -c:a pcm_s16le "${wavPath}"`,
+      { timeout: 60_000 }
     );
+    const wavBuf = await fs.readFile(wavPath);
+    fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+
+    const file = await toFile(wavBuf, 'audio.wav', { type: 'audio/wav' });
     const transcription = await (client.audio.transcriptions as any).create({
       file,
       model: 'whisper-1',

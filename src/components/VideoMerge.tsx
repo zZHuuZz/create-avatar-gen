@@ -118,15 +118,10 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
   }
 
   function getGestureTotalDuration(sceneIndex: number): number {
-    if (sceneIndex === 3) {
-      // +2.0 for the talking delay; stageOut omitted — cut directly after hold
-      return 2.0 + getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold');
-    }
     return getClipDuration(sceneIndex);
   }
 
-  function getGestureLead(key: SceneKey): number {
-    if (SCENE_KEY_MAP[key] === 3) return -2.0; // fires 2s after trigger word
+  function getGestureLead(_key: SceneKey): number {
     return 0;
   }
 
@@ -368,28 +363,9 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
       function pushGestureClips(key: SceneKey, triggerWord?: string) {
         const sceneIndex = SCENE_KEY_MAP[key] ?? 2;
-        if (sceneIndex === 3) {
-          const ps = posedScenes.find(p => p.sceneIndex === sceneIndex);
-          if (!ps) return;
-          if (ps.mergedVideoUrl) {
-            // Use pre-merged A+B as a single clip — same as dev route, no xfade mid-gesture
-            const totalDur = getStageDuration(sceneIndex, 'into') + getStageDuration(sceneIndex, 'hold');
-            out.push({ frampackUrl: `posed-${sceneIndex}`, jobId: `posed-${sceneIndex}`, label: ps.label, duration: totalDur, sceneIndex, triggerWord, level: 1 });
-          } else {
-            // Fallback: individual stages (pre-merge not yet complete)
-            let first = true;
-            for (const stageKey of ['into', 'hold'] as StageKey[]) {
-              const stage = ps.stages.find(s => s.key === stageKey && s.status === 'done');
-              if (!stage?.jobId || !stage.frampackUrl) continue;
-              out.push({ frampackUrl: stage.frampackUrl!, jobId: stage.jobId!, label: `${ps.label} ${STAGE_LABELS[stageKey]}`, duration: getStageDuration(sceneIndex, stageKey), sceneIndex, ...(first ? { triggerWord, level: 1 as const } : {}) });
-              first = false;
-            }
-          }
-        } else {
-          const scene = sceneForIndex(sceneIndex);
-          if (!scene) return;
-          out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: getClipDuration(scene.index), sceneIndex: scene.index, triggerWord, level: 1 });
-        }
+        const scene = sceneForIndex(sceneIndex);
+        if (!scene) return;
+        out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: getClipDuration(scene.index), sceneIndex: scene.index, triggerWord, level: 1 });
       }
 
       // Each xfade transition overlaps clips by FADE_DUR (0.12s in merge-video route).
@@ -412,7 +388,10 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         cursor = gestureStart + gestureDur;
       }
 
-      const remaining = totalAudioDur - cursor;
+      // xfade removes (N-1)×0.12s from total video duration.
+      // Compensate so the merged video always outlasts the audio by at least 1s.
+      const xfadeCompensation = out.length * FADE_COMP;
+      const remaining = totalAudioDur + 1.0 + xfadeCompensation - cursor;
       if (remaining > 0) fillGap(cursor, remaining);
 
       // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
@@ -421,12 +400,11 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       let handStreak = 0;
       const final: SequenceItem[] = [];
       for (const item of out) {
-        if (item.sceneIndex === 3) { lastHandIdx = null; handStreak = 0; final.push(item); continue; }
-        const isHand = item.sceneIndex === 1 || item.sceneIndex === 2;
+        const isHand = item.sceneIndex === 1 || item.sceneIndex === 2 || item.sceneIndex === 3;
         if (!isHand) { final.push(item); continue; }
         if (item.sceneIndex === lastHandIdx) { handStreak++; } else { lastHandIdx = item.sceneIndex; handStreak = 1; }
         if (handStreak >= 3) {
-          const altIdx: number = item.sceneIndex === 1 ? 2 : 1;
+          const altIdx: number = item.sceneIndex === 1 ? 2 : item.sceneIndex === 2 ? 3 : 1;
           const alt = doneScenes.find(s => s.index === altIdx);
           if (alt) {
             final.push({ ...item, frampackUrl: alt.frampackUrl!, jobId: alt.jobId!, label: alt.label, sceneIndex: alt.index, duration: getClipDuration(alt.index) });
@@ -458,14 +436,6 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       form.append('sequence', JSON.stringify(
         sequence.map(({ frampackUrl, jobId, label, duration }) => ({ frampackUrl, jobId, label, duration }))
       ));
-
-      // Upload pre-merged posed videos so the route can use them as single clips
-      for (const ps of posedScenes) {
-        if (ps.mergedVideoUrl) {
-          const blob = await fetch(ps.mergedVideoUrl).then(r => r.blob());
-          form.append(`posed_video_${ps.sceneIndex}`, blob, `posed_${ps.sceneIndex}.mp4`);
-        }
-      }
 
       const res = await fetch('/api/merge-video', { method: 'POST', body: form });
       if (!res.ok) {
