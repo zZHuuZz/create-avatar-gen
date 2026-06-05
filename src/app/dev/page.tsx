@@ -4,8 +4,8 @@ import { useState, useRef } from 'react';
 
 const SCENES = [
   { index: 0, key: 'no-hand',    label: 'Chỉ nói, không đưa tay', color: 'bg-gray-100',   defaultDur: 2.0 },
-  { index: 1, key: '1-hand',     label: '1 tay',                  color: 'bg-blue-50',    defaultDur: 2.0 },
-  { index: 2, key: '2-hand',     label: '2 tay',                  color: 'bg-green-50',   defaultDur: 1.5 },
+  { index: 1, key: '1-hand',     label: '2 tay B',                color: 'bg-blue-50',    defaultDur: 1.5 },
+  { index: 2, key: '2-hand',     label: '2 tay A',                color: 'bg-green-50',   defaultDur: 1.5 },
   { index: 3, key: 'point-up',   label: 'Chỉ vào cam',            color: 'bg-yellow-50',  defaultDur: 2.0 },
   { index: 4, key: 'talk-light', label: 'Nói nhẹ',                color: 'bg-purple-50',  defaultDur: 2.0 },
 ] as const;

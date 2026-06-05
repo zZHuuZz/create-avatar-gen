@@ -22,20 +22,20 @@ export const ALL_SCENES: SceneConfig[] = [
   },
   {
     index: 1,
-    label: '1 tay',
+    label: '2 tay B',
     prompt:
-      'A person speaking expressively to the camera. RIGHT hand is already raised at stomach/mid-torso level and moves continuously throughout — open palm pushes forward, wrist flicks, hand rotates and bobs with each word, fingers spread and close. Expressive ongoing talking gesture with right hand, always in motion. LEFT arm hangs completely still at side. Natural head nods and facial expressions.' + EYE_ANCHOR,
-    negativePrompt: `left arm moving, both hands moving, two hands gesturing, right hand still, right hand frozen, static hand, hand lowering, arm dropping, hand touching chest, ${BASE_NEGATIVE}`,
-    duration: 1.8,
+      'A person speaking to camera. Both hands make one single sharp downward press at mid-torso level — a decisive emphatic gesture like punctuating a point — then return to resting at sides. Clean and confident.' + EYE_ANCHOR,
+    negativePrompt: `arms lifting up, arms sweeping sideways, arms spreading wide, one hand only, asymmetric gesture, arms staying raised, repeated movement, ${BASE_NEGATIVE}`,
+    duration: 1.5,
     seedOffset: 10,
     hasArm: true,
     useEndImage: true,
   },
   {
     index: 2,
-    label: '2 tay',
+    label: '2 tay A',
     prompt:
-      'A person talking to camera. Both hands make one single decisive sweep outward then return. One crisp open-arm gesture, not repeated. Confident and natural.' + EYE_ANCHOR,
+      'A person talking to camera. Both hands make one single decisive sweep outward then return to resting. One crisp open-arm gesture, not repeated. Confident and natural.' + EYE_ANCHOR,
     negativePrompt: `repeated gesture, double movement, hands frozen, arms stay extended, static pose, ${BASE_NEGATIVE}`,
     duration: 1.5,
     seedOffset: 20,
