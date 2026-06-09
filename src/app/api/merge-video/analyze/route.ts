@@ -296,8 +296,8 @@ export async function POST(request: Request) {
   }
   secondaryMarkers.sort((a, b) => a.start - b.start);
 
-  // 6. L3: very common clause-boundary words — only used to fill dead zones with no L1/L2.
-  const L3_HAND_WORDS = ['và', 'thì', 'khi', 'nếu', 'để', 'cũng', 'vì', 'với'];
+  // 6. L3: very common clause-boundary / filler words — only used to fill gaps with no L1/L2.
+  const L3_HAND_WORDS = ['và', 'thì', 'khi', 'nếu', 'để', 'cũng', 'vì', 'với', 'đi', 'rồi', 'thôi', 'nha', 'nè', 'nhé'];
   const seenL3 = new Set<number>();
   const tertiaryMarkers: { start: number; end: number; word: string }[] = [];
   for (const phrase of L3_HAND_WORDS) {

@@ -37,8 +37,25 @@ const STAGE_LABELS: Record<StageKey, string> = { into: 'A', hold: 'B', out: 'C' 
 
 // Natural-hand gesture variants — each one may appear at most this many times in a
 // sequence, and repeats must be spaced apart so the video doesn't look like it's looping.
-const VARIANT_MAX_USES = 2;
+// C (fist, index 6) is intentionally rarer — max 2 uses vs 3 for A and B.
+const VARIANT_MAX_USES = 3;
+const VARIANT_C_IDX = 6;
+const VARIANT_C_MAX = 2;
 const VARIANT_MIN_GAP = 8; // seconds
+
+// Preferred natural-hand variant (scene index) per trigger word.
+// A (clap, 1)  → sequential / listing — marks each point in a list.
+// B (press, 5) → transitions, results, contrasts — the all-round workhorse.
+// C (fist, 6)  → no word preference — appears only when A/B are exhausted; max 2 uses.
+const VARIANT_WORD_PREF: Record<string, number> = {
+  'đầu tiên': 1, 'thứ nhất': 1, 'thứ hai': 1, 'thứ ba': 1, 'thứ tư': 1,
+  'thứ năm': 1, 'thứ sáu': 1, 'thứ bảy': 1, 'cuối cùng': 1,
+  'tiếp theo': 1, 'kế tiếp': 1,
+  'kết quả là': 5, 'do đó': 5, 'vì vậy': 5, 'thay vì': 5,
+  'hơn nữa': 5, 'ngoài ra': 5, 'bên cạnh đó': 5, 'song song đó': 5,
+  'nhưng': 5, 'tuy nhiên': 5, 'thế nhưng': 5, 'vậy mà': 5, 'mặc dù': 5,
+  'thậm chí': 5, 'quan trọng hơn': 5, 'đặc biệt là': 5,
+};
 
 // Linguistic priority — based on discourse weight, not gesture type.
 const MARKER_PRIORITY: Record<string, number> = {
@@ -263,6 +280,60 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         });
       }
 
+      // Tracks recent natural-hand variant placements (capped at 5 entries) to detect XYX patterns.
+      const variantHistory: number[] = [];
+
+      // Returns true only when C (index 6) is the candidate AND C appeared 2 slots ago
+      // (C→Y→C* pattern). Blocks C from repeating too closely; A and B can repeat freely.
+      function isXYXBlocked(candidateIdx: number): boolean {
+        if (candidateIdx !== VARIANT_C_IDX) return false;
+        const n = variantHistory.length;
+        if (n < 2) return false;
+        return variantHistory[n - 2] === VARIANT_C_IDX && variantHistory[n - 1] !== VARIANT_C_IDX;
+      }
+
+      function commitVariant(scene: SceneResult, clipStartTime: number) {
+        recordVariantUsage(scene, clipStartTime);
+        variantHistory.push(scene.index);
+        if (variantHistory.length > 5) variantHistory.shift();
+      }
+
+      // Preference-based picker for intentional variant placement.
+      // Default order A(1)→B(5)→C(6): C is deprioritized and capped at 2 uses (A/B at 3).
+      // Respects word preference, per-variant cap, gap constraint, and XYX blocking.
+      // Falls back to least-recently-used non-XYX variant when all are at cap/gap.
+      function pickVariant(triggerWord: string | undefined, clipStartTime: number): SceneResult | undefined {
+        if (naturalHandPool.length === 0) return undefined;
+        const wordKey = (triggerWord ?? '').toLowerCase().replace(/[\p{P}\p{S}]+/gu, ' ').trim();
+        const preferredIdx = VARIANT_WORD_PREF[wordKey];
+        const ABC_ORDER = [1, 5, 6]; // A, B, C — C tried last so it stays rare
+        const candidateOrder = preferredIdx !== undefined
+          ? [preferredIdx, ...ABC_ORDER.filter(i => i !== preferredIdx)]
+          : ABC_ORDER;
+        const order = candidateOrder.filter(idx => naturalHandPool.some(s => s.index === idx));
+        for (const idx of order) {
+          const scene = naturalHandPool.find(s => s.index === idx);
+          if (!scene) continue;
+          const u = variantUsage.get(idx);
+          const maxUses = idx === VARIANT_C_IDX ? VARIANT_C_MAX : VARIANT_MAX_USES;
+          const eligible = (!u || u.count < maxUses) && (!u || clipStartTime - u.lastEnd >= VARIANT_MIN_GAP);
+          if (!eligible || isXYXBlocked(idx)) continue;
+          commitVariant(scene, clipStartTime);
+          return scene;
+        }
+        // Fallback: non-XYX-blocked variants first, then least-recently-used
+        const ranked = naturalHandPool.slice().sort((a, b) => {
+          const aBlock = isXYXBlocked(a.index) ? 1 : 0;
+          const bBlock = isXYXBlocked(b.index) ? 1 : 0;
+          const ua = variantUsage.get(a.index)?.lastEnd ?? -Infinity;
+          const ub = variantUsage.get(b.index)?.lastEnd ?? -Infinity;
+          return aBlock - bBlock || ua - ub;
+        });
+        const fallback = ranked[0];
+        if (fallback) commitVariant(fallback, clipStartTime);
+        return fallback;
+      }
+
       // Round-robin pick that skips natural-hand variants which have hit their use cap
       // or haven't cooled down yet; falls back to the plain round-robin slot if none qualify.
       function pickClip(pool: SceneResult[], startIdx: number, clipStartTime: number): SceneResult {
@@ -271,7 +342,8 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
           const cand = pool[(startIdx + k) % n];
           if (NATURAL_HAND_VARIANTS.includes(cand.index)) {
             const u = variantUsage.get(cand.index);
-            const eligible = (!u || u.count < VARIANT_MAX_USES) && (!u || clipStartTime - u.lastEnd >= VARIANT_MIN_GAP);
+            const maxUses = cand.index === VARIANT_C_IDX ? VARIANT_C_MAX : VARIANT_MAX_USES;
+            const eligible = (!u || u.count < maxUses) && (!u || clipStartTime - u.lastEnd >= VARIANT_MIN_GAP);
             if (!eligible) continue;
           }
           recordVariantUsage(cand, clipStartTime);
@@ -313,15 +385,18 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         return { ...m, sceneKey: '1-hand' };
       });
 
-      // Step 2.5: Gesture variety — if the same gesture repeats more than 2× in a row,
-      // rotate to the other main type (1-hand ↔ 2-hand). Keeps the video from feeling monotonous.
+      // Step 2.5: Gesture variety — rotate to avoid repetition.
+      // When natural-hand variants are available, no back-to-back 2-hand (streak > 1 triggers rotation).
+      // Without natural-hand variants, keep the original 3-in-a-row limit.
+      // 1-hand never rotates before 3-in-a-row (variants themselves provide variety).
       const finalMarkers = step2Markers.reduce<{ out: AnalysisMarker[]; streak: number; lastKey: string | null }>(
         (acc, m) => {
           const key = m.sceneKey;
           if (key === 'point-up' || key === 'no-hand') { acc.out.push(m); return acc; }
           const sameAsLast = key === acc.lastKey;
           const streak = sameAsLast ? acc.streak + 1 : 1;
-          if (streak > 2) {
+          const streakLimit = (key === '2-hand' && naturalHandPool.length > 0) ? 1 : 2;
+          if (streak > streakLimit) {
             const rotated = key === '1-hand' ? '2-hand' : '1-hand';
             acc.out.push({ ...m, sceneKey: rotated });
             acc.lastKey = rotated; acc.streak = 1;
@@ -421,7 +496,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       function pushGestureClips(key: SceneKey, gestureStart: number, triggerWord?: string) {
         let scene: SceneResult | undefined;
         if (key === '1-hand' && naturalHandPool.length > 0) {
-          scene = pickClip(naturalHandPool, noHandN, gestureStart);
+          scene = pickVariant(triggerWord, gestureStart);
           noHandN++;
         } else {
           scene = sceneForIndex(SCENE_KEY_MAP[key] ?? 2);
@@ -456,7 +531,32 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       const remaining = totalAudioDur + 1.0 + xfadeCompensation - cursor;
       if (remaining > 0) fillGap(cursor, remaining);
 
-      // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
+      // Post-process 1: replace the second of any two consecutive 2-hand (sceneIndex 2) clips
+      // with a natural-hand variant, chosen by word-preference + anti-repetition rules.
+      // Computes cumulative time so the gap-check in pickVariant uses accurate start times.
+      const TWOHAND_IDX = 2;
+      let dedupCumul = 0;
+      const deduped: SequenceItem[] = [];
+      for (const item of out) {
+        if (item.sceneIndex === TWOHAND_IDX && naturalHandPool.length > 0) {
+          const prevHand = deduped.slice().reverse().find(x =>
+            ALL_SCENES.find(s => s.index === x.sceneIndex)?.hasArm
+          );
+          if (prevHand?.sceneIndex === TWOHAND_IDX) {
+            const varScene = pickVariant(item.triggerWord, dedupCumul);
+            if (varScene) {
+              const varDur = getClipDuration(varScene.index);
+              deduped.push({ ...item, frampackUrl: varScene.frampackUrl!, jobId: varScene.jobId!, label: varScene.label, sceneIndex: varScene.index, duration: varDur });
+              dedupCumul += varDur;
+              continue;
+            }
+          }
+        }
+        deduped.push(item);
+        dedupCumul += item.duration;
+      }
+
+      // Post-process 2: no same hand gesture 3 times in a row (across L1 + L2).
       // Point-up resets the streak. Short idle clips are transparent (don't reset).
       const HAND_CYCLE = [1, 2, 3]; // legacy rotation used when no sibling variant is available
       function pickAlternateIndex(currentIdx: number): number {
@@ -471,7 +571,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       let lastHandIdx: number | null = null;
       let handStreak = 0;
       const final: SequenceItem[] = [];
-      for (const item of out) {
+      for (const item of deduped) {
         const isHand = item.sceneIndex === 1 || item.sceneIndex === 2 || item.sceneIndex === 3
           || NATURAL_HAND_VARIANTS.includes(item.sceneIndex);
         if (!isHand) { final.push(item); continue; }

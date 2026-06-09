@@ -55,7 +55,7 @@ export async function POST(request: Request) {
               prompt: scene.prompt,
               negativePrompt: scene.negativePrompt,
               duration: scene.duration,
-              steps: 12,
+              steps: 20,
               guidanceScale: scene.hasArm ? 15 : 10,
               seed: seed + scene.seedOffset,
               useTeacache: true,

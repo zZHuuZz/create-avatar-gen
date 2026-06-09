@@ -8,28 +8,12 @@ const EYE_ANCHOR = ' Eyes always looking directly into the camera lens, steady d
 
 const HAND_NEGATIVE = `deformed hands, extra fingers, missing fingers, malformed hands, ${BASE_NEGATIVE}`;
 
-// Short, neutral statement of the avatar's starting hand pose (matches the asymmetric
-// resting pose generated for the avatar image). Kept brief and action-first — heavier
-// "everything stays the same / fixed framing" wrapper language was tried and ended up
-// smothering the actual gesture instruction, producing clips where hands never moved at all.
-const NATURAL_POSE_INTRO =
-  'A person speaking to the camera, framed from the chest up. Both hands rest near the ' +
-  'waist, close together but not touching, one slightly lower than the other, fingers ' +
-  'relaxed. ';
-
-function naturalPosePrompt(body: string): string {
-  return NATURAL_POSE_INTRO + body + EYE_ANCHOR;
-}
-
 export const ALL_SCENES: SceneConfig[] = [
   {
     index: 0,
     label: 'Chỉ nói, không đưa tay',
-    prompt: naturalPosePrompt(
-      'Person speaks naturally and calmly, with regular eye blinking and natural facial ' +
-      'expressions, gentle head movement and subtle body sway following the rhythm of ' +
-      'speech. Both hands stay resting in their positions, completely relaxed and unmoving.'
-    ),
+    prompt:
+      'Person speaks naturally to the camera. Eyes blink regularly. Hands completely still and resting. Subtle natural head movement and gentle body sway with speech rhythm. Natural facial expressions with frequent eye blinking.' + EYE_ANCHOR,
     negativePrompt: `arms raising, arms reaching, hand gestures, waving, pointing, arm movement, gesticulating, eyes wide open without blinking, ${BASE_NEGATIVE}`,
     duration: 2,
     seedOffset: 0,
@@ -39,12 +23,9 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 2,
     label: '2 tay A',
-    prompt: naturalPosePrompt(
-      'Person speaks with confidence and emphasis. Both hands rise together and sweep ' +
-      'outward away from each other in one crisp, decisive opening gesture, then return ' +
-      'together back to their resting positions. Single confident movement, not repeated.'
-    ),
-    negativePrompt: `repeated gesture, double movement, hands frozen, arms stay extended, static pose, asymmetric gesture, ${BASE_NEGATIVE}`,
+    prompt:
+      'A person talking to camera. Both hands make one single decisive sweep outward then return to resting. One crisp open-arm gesture, not repeated. Confident and natural.' + EYE_ANCHOR,
+    negativePrompt: `repeated gesture, double movement, hands frozen, arms stay extended, static pose, ${BASE_NEGATIVE}`,
     duration: 1.5,
     seedOffset: 20,
     hasArm: true,
@@ -53,14 +34,9 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 3,
     label: 'Chỉ vào cam',
-    prompt: naturalPosePrompt(
-      'Person speaks with strong emphasis. The low hand stays resting against the torso, ' +
-      'completely still. Only the upper hand rises clearly and points the index finger ' +
-      'directly forward at the camera lens in one crisp, decisive pointing motion, then ' +
-      'draws back down to its resting position. Single confident movement, not repeated. ' +
-      'The low hand stays still throughout.'
-    ),
-    negativePrompt: `pointing up, pointing sideways, lower hand moving, both hands gesturing, multiple fingers pointing, waving, ${HAND_NEGATIVE}`,
+    prompt:
+      'A person speaking with strong emphasis. Right hand raises and points index finger directly forward at the camera, finger aimed straight at the viewer. Single decisive forward-pointing gesture, confident and deliberate.' + EYE_ANCHOR,
+    negativePrompt: `pointing up, pointing sideways, left arm raising, two hands gesturing, multiple fingers pointing, waving, ${HAND_NEGATIVE}`,
     duration: 2,
     seedOffset: 30,
     hasArm: true,
@@ -69,12 +45,8 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 4,
     label: 'Nói nhẹ',
-    prompt: naturalPosePrompt(
-      'Person speaks with energy and conviction — animated facial expressions with eyebrows ' +
-      'raising and furrowing, pronounced head nods on stressed words, and the upper body ' +
-      'rocking gently forward and back with the rhythm of speech. Both hands stay resting in ' +
-      'their positions, completely relaxed and unmoving.'
-    ),
+    prompt:
+      'Person speaking with energy and conviction. Pronounced head nod downward on stressed words. Upper body rocks forward and back with speech rhythm. Shoulders move naturally. Animated facial expressions, eyebrows raising and furrowing. Hands completely still at sides.' + EYE_ANCHOR,
     negativePrompt: `arms raising, arms reaching, hand gestures, waving, pointing, arm movement, gesticulating, eyes wide open without blinking, ${BASE_NEGATIVE}`,
     duration: 2,
     seedOffset: 40,
@@ -84,14 +56,10 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 1,
     label: 'Tay tự nhiên A',
-    prompt: naturalPosePrompt(
-      'Person speaks naturally and casually, with emphasis. The low hand stays resting ' +
-      'against the torso, completely still. Only the upper hand rises clearly up to chest ' +
-      'height in one crisp, decisive emphasis gesture, then lowers back down to its resting ' +
-      'position. Single confident movement, not repeated. The low hand stays still throughout.'
-    ),
-    negativePrompt: `repeated lifting, both hands moving, hands frozen, static pose, palm facing camera, ${HAND_NEGATIVE}`,
-    duration: 2,
+    prompt:
+      'A person speaking with emphasis. Both hands rise to chest height and clap together once in one crisp motion, then lower back to resting. Single decisive clap gesture, confident and natural, not repeated.' + EYE_ANCHOR,
+    negativePrompt: `repeated clapping, hands frozen, static pose, one hand only, palm facing camera, ${HAND_NEGATIVE}`,
+    duration: 1.5,
     seedOffset: 10,
     hasArm: true,
     useEndImage: true,
@@ -100,15 +68,10 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 5,
     label: 'Tay tự nhiên B',
-    prompt: naturalPosePrompt(
-      'Person speaks while explaining an idea, with conviction. The low hand stays resting ' +
-      'against the torso, completely still. Only the upper hand rises clearly up to chest ' +
-      'height and turns palm-up in one crisp, decisive explaining gesture, then lowers back ' +
-      'down to its resting position. Single confident movement, not repeated. The low hand ' +
-      'stays still throughout.'
-    ),
-    negativePrompt: `repeated gesture, both hands moving, hands frozen, static pose, palm facing camera, ${HAND_NEGATIVE}`,
-    duration: 2,
+    prompt:
+      'A person speaking with conviction. Both hands make one single sharp downward press at mid-torso level — a decisive emphatic gesture like punctuating a point — then return to resting. Clean and confident, not repeated.' + EYE_ANCHOR,
+    negativePrompt: `arms lifting up, arms sweeping sideways, arms spreading wide, one hand only, asymmetric gesture, arms staying raised, repeated movement, ${HAND_NEGATIVE}`,
+    duration: 1.5,
     seedOffset: 50,
     hasArm: true,
     useEndImage: true,
@@ -117,14 +80,10 @@ export const ALL_SCENES: SceneConfig[] = [
   {
     index: 6,
     label: 'Tay tự nhiên C',
-    prompt: naturalPosePrompt(
-      'Person speaks with enthusiasm and emphasis. Both hands rise together clearly up to ' +
-      'chest height in one crisp, decisive lifting motion, as if raising something up to ' +
-      'show it, then lower back down together to their resting positions. Single confident ' +
-      'movement, both hands moving together in sync, not repeated.'
-    ),
-    negativePrompt: `repeated lifting, asymmetric gesture, hands frozen, static pose, palm facing camera, ${HAND_NEGATIVE}`,
-    duration: 2,
+    prompt:
+      'A person speaking with strong conviction. Both hands clench into fists and thrust forward together in one single decisive emphatic punch gesture at chest height, then pull back to resting. Both fists closed tight, not open hands. Single crisp gesture, not repeated.' + EYE_ANCHOR,
+    negativePrompt: `open hands, open palms, fingers spread, hands touching each other, clapping, sweeping apart, one hand only, asymmetric gesture, arms staying extended, repeated movement, ${HAND_NEGATIVE}`,
+    duration: 1.5,
     seedOffset: 60,
     hasArm: true,
     useEndImage: true,

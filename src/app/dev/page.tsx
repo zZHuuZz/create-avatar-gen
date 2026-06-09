@@ -4,18 +4,18 @@ import { useState, useRef } from 'react';
 
 const SCENES = [
   { index: 0, key: 'no-hand',    label: 'Chỉ nói, không đưa tay', color: 'bg-gray-100',   defaultDur: 2.0 },
-  { index: 1, key: '1-hand',     label: 'Tay tự nhiên A',         color: 'bg-blue-50',    defaultDur: 2.0 },
-  { index: 2, key: '2-hand',     label: '2 tay A',                color: 'bg-green-50',   defaultDur: 1.5 },
+  { index: 1, key: 'natural-hand',     label: 'Tay tự nhiên A',         color: 'bg-blue-50',    defaultDur: 2.0 },
+  { index: 2, key: '2-hand',     label: '2 tay',                color: 'bg-green-50',   defaultDur: 1.5 },
   { index: 3, key: 'point-up',   label: 'Chỉ vào cam',            color: 'bg-yellow-50',  defaultDur: 2.0 },
   { index: 4, key: 'talk-light', label: 'Nói nhẹ',                color: 'bg-purple-50',  defaultDur: 2.0 },
-  { index: 5, key: '1-hand',     label: 'Tay tự nhiên B',         color: 'bg-blue-50',    defaultDur: 2.0 },
-  { index: 6, key: '1-hand',     label: 'Tay tự nhiên C',         color: 'bg-blue-50',    defaultDur: 2.0 },
+  { index: 5, key: 'natural-hand',     label: 'Tay tự nhiên B',         color: 'bg-blue-50',    defaultDur: 2.0 },
+  { index: 6, key: 'natural-hand',     label: 'Tay tự nhiên C',         color: 'bg-blue-50',    defaultDur: 2.0 },
 ] as const;
 
 type SceneKey = (typeof SCENES)[number]['key'];
 
 const SCENE_KEY_MAP: Record<SceneKey, number> = {
-  'no-hand': 0, '1-hand': 1, '2-hand': 2, 'point-up': 3, 'talk-light': 4,
+  'no-hand': 0, 'natural-hand': 1, '2-hand': 2, 'point-up': 3, 'talk-light': 4,
 };
 
 const NO_HAND_KEYS = new Set<SceneKey>(['no-hand', 'talk-light']);
@@ -72,7 +72,7 @@ function getMarkerPriority(word: string): number {
 
 const MARKER_COLORS: Record<SceneKey, { bg: string; text: string; border: string }> = {
   'no-hand':    { bg: 'bg-gray-100',   text: 'text-gray-700',   border: 'border-gray-300' },
-  '1-hand':     { bg: 'bg-blue-100',   text: 'text-blue-800',   border: 'border-blue-300' },
+  'natural-hand':     { bg: 'bg-blue-100',   text: 'text-blue-800',   border: 'border-blue-300' },
   '2-hand':     { bg: 'bg-green-100',  text: 'text-green-800',  border: 'border-green-300' },
   'point-up':   { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-300' },
   'talk-light': { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-300' },
@@ -355,7 +355,7 @@ export default function DevPage() {
         if (m.sceneKey !== 'point-up') return m;
         if (m.isListIntro) return m;
         if (!pointUpUsed) { pointUpUsed = true; return m; }
-        return { ...m, sceneKey: '1-hand' as SceneKey };
+        return { ...m, sceneKey: 'natural-hand' as SceneKey };
       });
 
       // Step 2.5: Gesture variety — rotate 1-hand ↔ 2-hand if same gesture appears 2× in a row.
@@ -365,7 +365,7 @@ export default function DevPage() {
           if (key === 'point-up' || NO_HAND_KEYS.has(key as SceneKey)) { acc.out.push(m); return acc; }
           const streak = key === acc.lastKey ? acc.streak + 1 : 1;
           if (streak > 2) {
-            const rotated = (key === '1-hand' ? '2-hand' : '1-hand') as SceneKey;
+            const rotated = (key === 'natural-hand' ? '2-hand' : 'natural-hand') as SceneKey;
             acc.out.push({ ...m, sceneKey: rotated });
             acc.lastKey = rotated; acc.streak = 1;
           } else {
@@ -396,7 +396,7 @@ export default function DevPage() {
         }
 
         let scene: typeof SCENES[number];
-        if (key === '1-hand' && naturalHandPool.length > 0) {
+        if (key === 'natural-hand' && naturalHandPool.length > 0) {
           scene = pickClip(naturalHandPool, noHandN, gestureStart);
           noHandN++;
         } else {
@@ -571,7 +571,7 @@ export default function DevPage() {
                       })}
                     </div>
                     <div className="flex gap-3 mt-2 pt-2 border-t border-(--color-border)">
-                      {(['2-hand','1-hand','point-up'] as const).map((k) => {
+                      {(['2-hand','natural-hand','point-up'] as const).map((k) => {
                         const c = MARKER_COLORS[k]; const sc = SCENES.find(s => s.key === k)!;
                         return <span key={k} className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.bg} ${c.text}`}>{sc.label}</span>;
                       })}
