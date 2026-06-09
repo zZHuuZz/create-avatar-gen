@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react';
 import type { PosedSceneResult, SceneResult, StageKey } from '@/types/pipeline';
-import { ALL_SCENES } from '@/lib/scene-config';
+import { ALL_SCENES, NATURAL_HAND_VARIANTS } from '@/lib/scene-config';
 
 interface Props {
   scenes: SceneResult[];
@@ -34,6 +34,11 @@ const SCENE_KEY_MAP: Record<string, number> = {
 };
 
 const STAGE_LABELS: Record<StageKey, string> = { into: 'A', hold: 'B', out: 'C' };
+
+// Natural-hand gesture variants — each one may appear at most this many times in a
+// sequence, and repeats must be spaced apart so the video doesn't look like it's looping.
+const VARIANT_MAX_USES = 2;
+const VARIANT_MIN_GAP = 8; // seconds
 
 // Linguistic priority — based on discourse weight, not gesture type.
 const MARKER_PRIORITY: Record<string, number> = {
@@ -101,9 +106,21 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
   const [merging, setMerging] = useState(false);
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [enabledVariants, setEnabledVariants] = useState<Set<number> | null>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
   const doneScenes = scenes.filter((s) => s.status === 'done' && s.jobId && s.frampackUrl);
+  const doneVariants = doneScenes.filter((s) => NATURAL_HAND_VARIANTS.includes(s.index));
+  // Default to "all available variants enabled" until the user toggles one off.
+  const activeVariants = enabledVariants ?? new Set(doneVariants.map((s) => s.index));
+
+  function toggleVariant(index: number) {
+    setEnabledVariants((prev) => {
+      const next = new Set(prev ?? doneVariants.map((s) => s.index));
+      if (next.has(index)) next.delete(index); else next.add(index);
+      return next;
+    });
+  }
 
   function getClipDuration(sceneIndex: number) {
     return ALL_SCENES.find((s) => s.index === sceneIndex)?.duration ?? 2.5;
@@ -225,7 +242,45 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
       const totalAudioDur: number = data.audioDuration ?? audioDuration;
       const noHandClipDur = getClipDuration(0);
       const noHandPool = doneScenes.filter((s) => !(ALL_SCENES.find((a) => a.index === s.index)?.hasArm));
-      const handFillerPool = doneScenes.filter((s) => { const sc = ALL_SCENES.find((a) => a.index === s.index); return sc?.hasArm && s.index !== 3; });
+      const handFillerPool = doneScenes.filter((s) => {
+        const sc = ALL_SCENES.find((a) => a.index === s.index);
+        if (!sc?.hasArm || s.index === 3) return false;
+        if (sc.variantGroup && !activeVariants.has(s.index)) return false;
+        return true;
+      });
+      const naturalHandPool = doneScenes.filter((s) => NATURAL_HAND_VARIANTS.includes(s.index) && activeVariants.has(s.index));
+
+      // Tracks how many times each natural-hand variant has been used and when its
+      // last clip ends, so repeats stay capped and spaced apart (avoids looking like a loop).
+      const variantUsage = new Map<number, { count: number; lastEnd: number }>();
+
+      function recordVariantUsage(scene: SceneResult, clipStartTime: number) {
+        if (!NATURAL_HAND_VARIANTS.includes(scene.index)) return;
+        const prev = variantUsage.get(scene.index);
+        variantUsage.set(scene.index, {
+          count: (prev?.count ?? 0) + 1,
+          lastEnd: clipStartTime + getClipDuration(scene.index),
+        });
+      }
+
+      // Round-robin pick that skips natural-hand variants which have hit their use cap
+      // or haven't cooled down yet; falls back to the plain round-robin slot if none qualify.
+      function pickClip(pool: SceneResult[], startIdx: number, clipStartTime: number): SceneResult {
+        const n = pool.length;
+        for (let k = 0; k < n; k++) {
+          const cand = pool[(startIdx + k) % n];
+          if (NATURAL_HAND_VARIANTS.includes(cand.index)) {
+            const u = variantUsage.get(cand.index);
+            const eligible = (!u || u.count < VARIANT_MAX_USES) && (!u || clipStartTime - u.lastEnd >= VARIANT_MIN_GAP);
+            if (!eligible) continue;
+          }
+          recordVariantUsage(cand, clipStartTime);
+          return cand;
+        }
+        const fallback = pool[startIdx % n];
+        recordVariantUsage(fallback, clipStartTime);
+        return fallback;
+      }
 
       // Step 1: Resolve back-to-back specials — keep higher linguistic priority, drop lower.
       // First marker anchors at position 0 (always starts with gesture).
@@ -314,11 +369,12 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         let lastGestureEnd = -Infinity;
         for (const tm of inZone) {
           if (tm.start - lastGestureEnd < L3_INTERVAL) continue; // enforce min spacing
-          const scene = handFillerPool[noHandN % handFillerPool.length];
-          const handClipDur = getClipDuration(scene.index);
+          // Pool members share duration, so we can size the slot before knowing which one wins the pick.
+          const handClipDur = getClipDuration(handFillerPool[noHandN % handFillerPool.length].index);
           const latestFit = subEnd - handClipDur;
           if (latestFit < lpos) break;
           const handStart = Math.min(Math.max(lpos, tm.start), latestFit);
+          const scene = pickClip(handFillerPool, noHandN, handStart);
           if (handStart > lpos) pushNoHand(handStart - lpos);
           out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: handClipDur, sceneIndex: scene.index, triggerWord: tm.word, level: 3 });
           noHandN++;
@@ -345,13 +401,14 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
         let pos = gapStartTime;
         for (const sm of inGap) {
-          const scene = handFillerPool[noHandN % handFillerPool.length];
-          const handClipDur = getClipDuration(scene.index);
+          const handClipDur = getClipDuration(handFillerPool[noHandN % handFillerPool.length].index);
           const latestFit = handZoneEnd - handClipDur;
           if (latestFit < pos) continue;
           const handStart = Math.min(Math.max(pos, sm.start), latestFit);
-          // Sub-gap before this L2 marker — use L3 if large enough, otherwise idle
+          // Sub-gap before this L2 marker — use L3 if large enough, otherwise idle.
+          // Filled BEFORE picking this clip so variant usage is recorded in chronological order.
           if (handStart > pos) fillSubGapL3(pos, handStart);
+          const scene = pickClip(handFillerPool, noHandN, handStart);
           out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: handClipDur, sceneIndex: scene.index, triggerWord: sm.word, level: 2 });
           noHandN++;
           pos = handStart + handClipDur;
@@ -361,9 +418,14 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
         if (handZoneEnd < gapEnd) pushNoHand(gapEnd - handZoneEnd);
       }
 
-      function pushGestureClips(key: SceneKey, triggerWord?: string) {
-        const sceneIndex = SCENE_KEY_MAP[key] ?? 2;
-        const scene = sceneForIndex(sceneIndex);
+      function pushGestureClips(key: SceneKey, gestureStart: number, triggerWord?: string) {
+        let scene: SceneResult | undefined;
+        if (key === '1-hand' && naturalHandPool.length > 0) {
+          scene = pickClip(naturalHandPool, noHandN, gestureStart);
+          noHandN++;
+        } else {
+          scene = sceneForIndex(SCENE_KEY_MAP[key] ?? 2);
+        }
         if (!scene) return;
         out.push({ frampackUrl: scene.frampackUrl!, jobId: scene.jobId!, label: scene.label, duration: getClipDuration(scene.index), sceneIndex: scene.index, triggerWord, level: 1 });
       }
@@ -384,7 +446,7 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
           if (gapDur > 0) fillGap(cursor, gapDur, SCENE_KEY_MAP[key] === 3 ? noHandClipDur : 0);
         }
 
-        pushGestureClips(key, marker.word);
+        pushGestureClips(key, gestureStart, marker.word);
         cursor = gestureStart + gestureDur;
       }
 
@@ -396,15 +458,26 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
 
       // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
       // Point-up resets the streak. Short idle clips are transparent (don't reset).
+      const HAND_CYCLE = [1, 2, 3]; // legacy rotation used when no sibling variant is available
+      function pickAlternateIndex(currentIdx: number): number {
+        if (NATURAL_HAND_VARIANTS.includes(currentIdx)) {
+          const sibling = NATURAL_HAND_VARIANTS.find((i) => i !== currentIdx && activeVariants.has(i) && doneScenes.some((s) => s.index === i));
+          if (sibling !== undefined) return sibling;
+        }
+        const i = HAND_CYCLE.indexOf(currentIdx);
+        return i === -1 ? HAND_CYCLE[0] : HAND_CYCLE[(i + 1) % HAND_CYCLE.length];
+      }
+
       let lastHandIdx: number | null = null;
       let handStreak = 0;
       const final: SequenceItem[] = [];
       for (const item of out) {
-        const isHand = item.sceneIndex === 1 || item.sceneIndex === 2 || item.sceneIndex === 3;
+        const isHand = item.sceneIndex === 1 || item.sceneIndex === 2 || item.sceneIndex === 3
+          || NATURAL_HAND_VARIANTS.includes(item.sceneIndex);
         if (!isHand) { final.push(item); continue; }
         if (item.sceneIndex === lastHandIdx) { handStreak++; } else { lastHandIdx = item.sceneIndex; handStreak = 1; }
         if (handStreak >= 3) {
-          const altIdx: number = item.sceneIndex === 1 ? 2 : item.sceneIndex === 2 ? 3 : 1;
+          const altIdx = pickAlternateIndex(item.sceneIndex);
           const alt = doneScenes.find(s => s.index === altIdx);
           if (alt) {
             final.push({ ...item, frampackUrl: alt.frampackUrl!, jobId: alt.jobId!, label: alt.label, sceneIndex: alt.index, duration: getClipDuration(alt.index) });
@@ -529,6 +602,27 @@ export function VideoMerge({ scenes, posedScenes }: Props) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Natural-hand gesture variants — pick which ones the auto-sequencer is allowed to use */}
+      {doneVariants.length > 1 && (
+        <div>
+          <label className="text-xs font-medium text-(--color-secondary) block mb-1.5">
+            Biến thể &quot;tay tự nhiên&quot; dùng trong auto-sequence
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {doneVariants.map((scene) => {
+              const checked = activeVariants.has(scene.index);
+              return (
+                <label key={scene.index}
+                  className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${checked ? 'border-(--color-primary) bg-(--color-primary-light) text-(--color-foreground)' : 'border-(--color-border) text-(--color-secondary)'}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleVariant(scene.index)} className="accent-(--color-primary)" />
+                  {scene.label}
+                </label>
+              );
+            })}
+          </div>
         </div>
       )}
 

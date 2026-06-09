@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { normalizePose } from '@/lib/openai-image';
+import { normalizePose } from '@/lib/image-gen';
 import { ALL_SCENES, POSED_SCENE_INDICES } from '@/lib/scene-config';
 
 export const maxDuration = 180;
@@ -31,14 +31,14 @@ export async function POST(request: Request) {
   );
 
   try {
-    // Step 1: generate main avatar — clasped hands pose from reference.jpg
+    // Step 1: generate main avatar — asymmetric resting-hands pose from reference.jpg
     const generated = await normalizePose(imageBase64, referenceImageBuffer, key, {
-      poseHint: 'Right hand gently holds left hand at waist level, fingers naturally interlocked — NOT a prayer or namaste pose. Both forearms visible from elbow to wrist. Output framed waist-up so no hand or forearm is cropped.',
+      poseHint: 'TWO HANDS REQUIRED — even if the portrait only shows one hand, the output must show both. Both hands rest gently in front of the lower torso near the waist, close to each other but not touching and not overlapping — one resting slightly lower, the other just slightly higher and a touch to the side, fingers relaxed and naturally curled. Neither hand crosses the body or reaches up toward the chest or shoulder; they stay near each other at waist level with only a small height difference. CRITICAL: both hands AND both forearms (elbow to wrist) must be completely visible and unobstructed — neither hand may be hidden behind the other, behind the body, behind clothing, or cut off by the frame edge. Output framed waist-up so no hand or forearm is cropped.',
     });
 
     // Step 2: generate each pose FROM the avatar so background is guaranteed identical.
     // The blurred grayscale pose-guide carries zero visual info from the avatar,
-    // so the clasped-hands do NOT bleed into the pose output.
+    // so the resting-hands pose does NOT bleed into the pose output.
     const poseEntries: ({ sceneIndex: number; img: string } | null)[] = [];
     for (const scene of posedScenes) {
       const refPath = path.join(process.cwd(), 'public', 'poses', scene.poseConfig!.referenceImageFile!);

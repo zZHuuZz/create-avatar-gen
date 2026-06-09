@@ -1,30 +1,37 @@
 import { submitJob, pollJobSSE } from '@/lib/framepack';
-import { ALL_SCENES, QUICK_SCENE } from '@/lib/scene-config';
-import { getClipPath } from '@/lib/clip-cache';
-import type { GenerateVideoRequest, SSEEvent } from '@/types/pipeline';
+import { ALL_SCENES } from '@/lib/scene-config';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 1800;
 
+// Step counts to compare, in order — same image, prompt, and seed for each, so the
+// only variable is `steps`. Lets us see exactly how much quality/time changes per step.
+const STEP_COUNTS = [12, 15, 20] as const;
+
+interface StepTestRequest {
+  imageBase64: string;
+  sceneIndex: number;
+  frampackUrl?: string;
+  baseSeed?: number;
+}
+
 export async function POST(request: Request) {
-  let body: GenerateVideoRequest;
+  let body: StepTestRequest;
   try {
     body = await request.json();
   } catch {
     return Response.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { imageBase64, frampackUrl: bodyFrampackUrl, scenes, baseSeed, sceneIndex } = body;
-  const url = bodyFrampackUrl || process.env.FRAMEPACK_API_URL;
+  const { imageBase64, sceneIndex, baseSeed } = body;
+  const url = body.frampackUrl || process.env.FRAMEPACK_API_URL;
+  const scene = ALL_SCENES.find((s) => s.index === sceneIndex);
 
   if (!imageBase64 || !url) {
     return Response.json({ error: 'imageBase64 and frampackUrl are required' }, { status: 400 });
   }
-
-  let scenesToRun = scenes === 'all' ? ALL_SCENES : [QUICK_SCENE];
-  if (sceneIndex !== undefined) {
-    const single = ALL_SCENES.find((s) => s.index === sceneIndex);
-    if (single) scenesToRun = [single];
+  if (!scene) {
+    return Response.json({ error: `Unknown sceneIndex: ${sceneIndex}` }, { status: 400 });
   }
 
   const seed = baseSeed ?? Math.floor(Math.random() * 1_000_000);
@@ -34,7 +41,7 @@ export async function POST(request: Request) {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: SSEEvent) => {
+      const send = (event: Record<string, unknown>) => {
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
@@ -43,10 +50,10 @@ export async function POST(request: Request) {
       };
 
       try {
-        for (const scene of scenesToRun) {
+        for (const steps of STEP_COUNTS) {
           if (abortController.signal.aborted) break;
 
-          send({ type: 'scene-start', sceneIndex: scene.index, label: scene.label });
+          send({ type: 'step-start', steps });
           const startedAt = Date.now();
 
           let jobId: string;
@@ -55,18 +62,14 @@ export async function POST(request: Request) {
               prompt: scene.prompt,
               negativePrompt: scene.negativePrompt,
               duration: scene.duration,
-              steps: 12,
+              steps,
               guidanceScale: scene.hasArm ? 15 : 10,
-              seed: seed + scene.seedOffset,
+              seed,
               useTeacache: true,
               endImageBase64: scene.useEndImage ? imageBase64 : undefined,
             });
           } catch (err) {
-            send({
-              type: 'scene-error',
-              sceneIndex: scene.index,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            send({ type: 'step-error', steps, error: err instanceof Error ? err.message : String(err) });
             continue;
           }
 
@@ -74,19 +77,13 @@ export async function POST(request: Request) {
             await pollJobSSE(
               url,
               jobId,
-              (pct) => send({ type: 'scene-progress', sceneIndex: scene.index, pct }),
+              (pct) => send({ type: 'step-progress', steps, pct }),
               abortController.signal
             );
-            // Cache clip immediately so it survives FramePack job expiry
-            getClipPath(jobId, url).catch(() => {});
-            send({ type: 'scene-done', sceneIndex: scene.index, jobId, frampackUrl: url, elapsedMs: Date.now() - startedAt });
+            send({ type: 'step-done', steps, jobId, frampackUrl: url, elapsedMs: Date.now() - startedAt });
           } catch (err) {
             if (abortController.signal.aborted) break;
-            send({
-              type: 'scene-error',
-              sceneIndex: scene.index,
-              error: err instanceof Error ? err.message : String(err),
-            });
+            send({ type: 'step-error', steps, error: err instanceof Error ? err.message : String(err) });
           }
         }
 

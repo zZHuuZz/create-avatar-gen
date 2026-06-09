@@ -6,6 +6,13 @@ interface Props {
   scenes: SceneResult[];
 }
 
+function formatElapsed(ms: number): string {
+  const totalSec = Math.round(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+}
+
 const STATUS_BADGE: Record<SceneStatus, { label: string; color: string }> = {
   pending:    { label: 'Pending',     color: 'text-(--color-secondary) bg-(--color-muted)' },
   submitting: { label: 'Submitting',  color: 'text-blue-600 bg-blue-50' },
@@ -63,6 +70,12 @@ export function VideoProgress({ scenes }: Props) {
               <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${badge.color}`}>
                 {scene.status === 'generating' ? `${scene.progress}%` : badge.label}
               </span>
+
+              {scene.status === 'done' && scene.elapsedMs != null && (
+                <span className="text-[11px] text-(--color-secondary) shrink-0">
+                  {formatElapsed(scene.elapsedMs)}
+                </span>
+              )}
 
               {scene.status === 'error' && scene.error && (
                 <span className="text-[11px] text-(--color-error) truncate max-w-32" title={scene.error}>

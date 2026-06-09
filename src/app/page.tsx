@@ -155,7 +155,7 @@ export default function Home() {
         if (i >= 0) next[i] = { ...next[i], status: 'generating', progress: event.pct };
       } else if (event.type === 'scene-done') {
         const i = next.findIndex((s) => s.index === event.sceneIndex);
-        if (i >= 0) next[i] = { ...next[i], status: 'done', progress: 100, jobId: event.jobId, frampackUrl: event.frampackUrl };
+        if (i >= 0) next[i] = { ...next[i], status: 'done', progress: 100, jobId: event.jobId, frampackUrl: event.frampackUrl, elapsedMs: event.elapsedMs };
       } else if (event.type === 'scene-error') {
         const i = next.findIndex((s) => s.index === event.sceneIndex);
         if (i >= 0) next[i] = { ...next[i], status: 'error', error: event.error };

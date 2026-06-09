@@ -9,7 +9,7 @@ const execAsync = promisify(exec);
 
 export const maxDuration = 600;
 
-// sequence item: { sceneIndex: 0|1|2|3|4, duration: number }
+// sequence item: { sceneIndex: 0-6, duration: number }
 export async function POST(request: Request) {
   let formData: FormData;
   try {
@@ -32,9 +32,9 @@ export async function POST(request: Request) {
   await fs.mkdir(tmpDir, { recursive: true });
 
   try {
-    // Save uploaded videos (0–4) to disk
-    const videoPaths: (string | null)[] = [null, null, null, null, null];
-    for (let i = 0; i < 5; i++) {
+    // Save uploaded videos (0–6) to disk
+    const videoPaths: (string | null)[] = [null, null, null, null, null, null, null];
+    for (let i = 0; i < 7; i++) {
       const file = formData.get(`video_${i}`) as File | null;
       if (file) {
         const p = join(tmpDir, `source_${i}.mp4`);

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { normalizePose, generatePoseImage } from '@/lib/openai-image';
+import { normalizePose, generatePoseImage } from '@/lib/image-gen';
 import { submitJob, pollJobSSE } from '@/lib/framepack';
 import { ALL_SCENES } from '@/lib/scene-config';
 import { getClipPath } from '@/lib/clip-cache';

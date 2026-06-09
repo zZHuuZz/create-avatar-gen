@@ -4,10 +4,12 @@ import { useState, useRef } from 'react';
 
 const SCENES = [
   { index: 0, key: 'no-hand',    label: 'Chỉ nói, không đưa tay', color: 'bg-gray-100',   defaultDur: 2.0 },
-  { index: 1, key: '1-hand',     label: '2 tay B',                color: 'bg-blue-50',    defaultDur: 1.5 },
+  { index: 1, key: '1-hand',     label: 'Tay tự nhiên A',         color: 'bg-blue-50',    defaultDur: 2.0 },
   { index: 2, key: '2-hand',     label: '2 tay A',                color: 'bg-green-50',   defaultDur: 1.5 },
   { index: 3, key: 'point-up',   label: 'Chỉ vào cam',            color: 'bg-yellow-50',  defaultDur: 2.0 },
   { index: 4, key: 'talk-light', label: 'Nói nhẹ',                color: 'bg-purple-50',  defaultDur: 2.0 },
+  { index: 5, key: '1-hand',     label: 'Tay tự nhiên B',         color: 'bg-blue-50',    defaultDur: 2.0 },
+  { index: 6, key: '1-hand',     label: 'Tay tự nhiên C',         color: 'bg-blue-50',    defaultDur: 2.0 },
 ] as const;
 
 type SceneKey = (typeof SCENES)[number]['key'];
@@ -17,6 +19,13 @@ const SCENE_KEY_MAP: Record<SceneKey, number> = {
 };
 
 const NO_HAND_KEYS = new Set<SceneKey>(['no-hand', 'talk-light']);
+
+// "Tay tự nhiên" variant slots — interchangeable variants of the same natural-hand gesture.
+// Each may appear at most VARIANT_MAX_USES times in a sequence, spaced ≥ VARIANT_MIN_GAP apart,
+// so the result doesn't look like the same clip looping.
+const NATURAL_HAND_INDICES = [1, 5, 6];
+const VARIANT_MAX_USES = 2;
+const VARIANT_MIN_GAP = 8; // seconds
 
 function getGestureLead(_key: SceneKey): number {
   return 0;
@@ -110,8 +119,8 @@ function getClipDur(sceneIndex: number, videoDurations: (number | null)[]): numb
 }
 
 export default function DevPage() {
-  const [videos, setVideos] = useState<(File | null)[]>([null, null, null, null, null]);
-  const [videoDurations, setVideoDurations] = useState<(number | null)[]>([null, null, null, null, null]);
+  const [videos, setVideos] = useState<(File | null)[]>([null, null, null, null, null, null, null]);
+  const [videoDurations, setVideoDurations] = useState<(number | null)[]>([null, null, null, null, null, null, null]);
   const [audioDuration, setAudioDuration] = useState<number | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [transcript, setTranscript] = useState<string | null>(null);
@@ -121,7 +130,20 @@ export default function DevPage() {
   const [mergedUrl, setMergedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [markers, setMarkers] = useState<Marker[]>([]);
+  const [enabledVariants, setEnabledVariants] = useState<Set<number> | null>(null);
   const audioRef = useRef<HTMLInputElement>(null);
+
+  const uploadedVariants = NATURAL_HAND_INDICES.filter((i) => videos[i]);
+  // Default to "all uploaded variants enabled" until the user toggles one off.
+  const activeVariants = enabledVariants ?? new Set(uploadedVariants);
+
+  function toggleVariant(index: number) {
+    setEnabledVariants((prev) => {
+      const next = new Set(prev ?? uploadedVariants);
+      if (next.has(index)) next.delete(index); else next.add(index);
+      return next;
+    });
+  }
 
   function setVideo(i: number, file: File) {
     setVideos((prev) => { const n = [...prev]; n[i] = file; return n; });
@@ -195,7 +217,44 @@ export default function DevPage() {
       const tertiaryMarkersData: { start: number; end: number; word: string }[] = data.tertiaryMarkers ?? [];
       const noHandPool = SCENES.filter((s) => NO_HAND_KEYS.has(s.key) && videos[s.index]);
       const noHandClipDur = noHandPool.length > 0 ? getClipDur(noHandPool[0].index, videoDurations) : 2;
-      const handFillerPool = SCENES.filter((s) => !NO_HAND_KEYS.has(s.key) && videos[s.index]);
+      const handFillerPool = SCENES.filter((s) => {
+        if (NO_HAND_KEYS.has(s.key) || !videos[s.index]) return false;
+        if (NATURAL_HAND_INDICES.includes(s.index) && !activeVariants.has(s.index)) return false;
+        return true;
+      });
+      const naturalHandPool = SCENES.filter((s) => NATURAL_HAND_INDICES.includes(s.index) && videos[s.index] && activeVariants.has(s.index));
+
+      // Tracks how many times each natural-hand variant has been used and when its last
+      // clip ends, so repeats stay capped (≤ VARIANT_MAX_USES) and spaced ≥ VARIANT_MIN_GAP apart.
+      const variantUsage = new Map<number, { count: number; lastEnd: number }>();
+
+      function recordVariantUsage(scene: typeof SCENES[number], clipStartTime: number) {
+        if (!NATURAL_HAND_INDICES.includes(scene.index)) return;
+        const prev = variantUsage.get(scene.index);
+        variantUsage.set(scene.index, {
+          count: (prev?.count ?? 0) + 1,
+          lastEnd: clipStartTime + getClipDur(scene.index, videoDurations),
+        });
+      }
+
+      // Round-robin pick that skips natural-hand variants which hit their use cap or
+      // haven't cooled down yet; falls back to the plain round-robin slot if none qualify.
+      function pickClip(pool: typeof SCENES[number][], startIdx: number, clipStartTime: number): typeof SCENES[number] {
+        const n = pool.length;
+        for (let k = 0; k < n; k++) {
+          const cand = pool[(startIdx + k) % n];
+          if (NATURAL_HAND_INDICES.includes(cand.index)) {
+            const u = variantUsage.get(cand.index);
+            const eligible = (!u || u.count < VARIANT_MAX_USES) && (!u || clipStartTime - u.lastEnd >= VARIANT_MIN_GAP);
+            if (!eligible) continue;
+          }
+          recordVariantUsage(cand, clipStartTime);
+          return cand;
+        }
+        const fallback = pool[startIdx % n];
+        recordVariantUsage(fallback, clipStartTime);
+        return fallback;
+      }
 
       function pushNoHand(duration: number, startN: number): number {
         if (noHandPool.length === 0 || duration < 0.5) return startN;
@@ -221,12 +280,13 @@ export default function DevPage() {
         let lastGestureEnd = -Infinity;
         for (const tm of inZone) {
           if (tm.start - lastGestureEnd < L3_INTERVAL) continue;
-          const handScene = handFillerPool[n % handFillerPool.length];
-          const handClipDur = getClipDur(handScene.index, videoDurations);
+          // Pool members share duration, so we can size the slot before knowing which one wins the pick.
+          const handClipDur = getClipDur(handFillerPool[n % handFillerPool.length].index, videoDurations);
           const latestFit = subEnd - handClipDur;
           if (latestFit < lpos) break;
           const handStart = Math.min(Math.max(lpos, tm.start), latestFit);
           if (handStart > lpos) n = pushNoHand(handStart - lpos, n);
+          const handScene = pickClip(handFillerPool, n, handStart);
           out.push({ sceneIndex: handScene.index, label: handScene.label, duration: handClipDur, key: handScene.key, triggerWord: tm.word, level: 3 });
           n++;
           lpos = handStart + handClipDur;
@@ -252,12 +312,14 @@ export default function DevPage() {
         let n = startN;
         let pos = gapStartTime;
         for (const sm of inGap) {
-          const handScene = handFillerPool[n % handFillerPool.length];
-          const handClipDur = getClipDur(handScene.index, videoDurations);
+          const handClipDur = getClipDur(handFillerPool[n % handFillerPool.length].index, videoDurations);
           const latestFit = handZoneEnd - handClipDur;
           if (latestFit < pos) continue;
           const handStart = Math.min(Math.max(pos, sm.start), latestFit);
+          // Sub-gap before this L2 marker filled BEFORE picking this clip, so variant
+          // usage is recorded in chronological order.
           if (handStart > pos) n = fillSubGapL3(pos, handStart, n);
+          const handScene = pickClip(handFillerPool, n, handStart);
           out.push({ sceneIndex: handScene.index, label: handScene.label, duration: handClipDur, key: handScene.key, triggerWord: sm.word, level: 2 });
           n++;
           pos = handStart + handClipDur;
@@ -333,14 +395,28 @@ export default function DevPage() {
           noHandN = fillGap(cursor, gapDur, noHandN);
         }
 
-        const scene = SCENES.find((s) => s.index === sceneIdx)!;
-        out.push({ sceneIndex: sceneIdx, label: scene.label, duration: gestureClipDur, key, triggerWord: marker.word, level: 1 });
+        let scene: typeof SCENES[number];
+        if (key === '1-hand' && naturalHandPool.length > 0) {
+          scene = pickClip(naturalHandPool, noHandN, gestureStart);
+          noHandN++;
+        } else {
+          scene = SCENES.find((s) => s.index === sceneIdx)!;
+        }
+        out.push({ sceneIndex: scene.index, label: scene.label, duration: getClipDur(scene.index, videoDurations), key, triggerWord: marker.word, level: 1 });
         cursor = gestureStart + gestureClipDur;
       }
 
       const xfadeCompensation = out.length * FADE_COMP;
       noHandN = fillGap(cursor, totalAudioDur + 1.0 + xfadeCompensation - cursor, noHandN);
       // Post-process: no same hand gesture 3 times in a row (across L1 + L2).
+      function pickAlternateIndex(currentIdx: number): number {
+        if (NATURAL_HAND_INDICES.includes(currentIdx)) {
+          const sibling = NATURAL_HAND_INDICES.find((i) => i !== currentIdx && activeVariants.has(i) && videos[i]);
+          if (sibling !== undefined) return sibling;
+        }
+        return currentIdx === 1 ? 2 : 1;
+      }
+
       let lastHandIdx: number | null = null;
       let handStreak = 0;
       const final: SequenceItem[] = [];
@@ -349,7 +425,7 @@ export default function DevPage() {
         if (!isHand) { final.push(item); continue; }
         if (item.sceneIndex === lastHandIdx) { handStreak++; } else { lastHandIdx = item.sceneIndex; handStreak = 1; }
         if (handStreak >= 3) {
-          const altIdx: number = item.sceneIndex === 1 ? 2 : 1;
+          const altIdx = pickAlternateIndex(item.sceneIndex);
           if (videos[altIdx]) {
             const altScene = SCENES.find(s => s.index === altIdx)!;
             final.push({ ...item, sceneIndex: altIdx, label: altScene.label, key: altScene.key, duration: getClipDur(altIdx, videoDurations) });
@@ -393,7 +469,7 @@ export default function DevPage() {
           <p className="text-xs text-(--color-secondary) mt-1">Upload test videos for each scene case, then test analyze + merge without running the full pipeline.</p>
         </div>
 
-        {/* Video uploaders — talking variants (0, 4) + gesture scenes (1, 2, 3) */}
+        {/* Video uploaders — talking variants (0, 4) + gesture scenes (1, 2, 3, 5, 6) */}
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
             {SCENES.filter((s) => NO_HAND_KEYS.has(s.key)).map((scene) => (
@@ -401,12 +477,48 @@ export default function DevPage() {
                 onFile={(f) => setVideo(scene.index, f)} onDuration={(d) => setVideoDuration(scene.index, d)} />
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            {SCENES.filter((s) => !NO_HAND_KEYS.has(s.key)).map((scene) => (
+          <div className="grid grid-cols-2 gap-3">
+            {SCENES.filter((s) => !NO_HAND_KEYS.has(s.key) && ![1, 5, 6].includes(s.index)).map((scene) => (
               <VideoSlot key={scene.index} scene={scene} file={videos[scene.index]}
                 onFile={(f) => setVideo(scene.index, f)} onDuration={(d) => setVideoDuration(scene.index, d)} />
             ))}
           </div>
+
+          {/* "Tay tự nhiên" variants grouped together — A is required, B/C are optional extras for variety */}
+          <div className="flex flex-col gap-2 p-3 rounded-xl border border-dashed border-(--color-border) bg-(--color-muted)/40">
+            <span className="text-[11px] text-(--color-secondary)">
+              Biến thể cử chỉ &quot;tay tự nhiên&quot; — A là bắt buộc; B và C tuỳ chọn, dùng để tăng đa dạng cho auto-sequence
+            </span>
+            <div className="grid grid-cols-3 gap-3">
+              {SCENES.filter((s) => [1, 5, 6].includes(s.index)).map((scene) => (
+                <VideoSlot key={scene.index} scene={scene} file={videos[scene.index]}
+                  onFile={(f) => setVideo(scene.index, f)} onDuration={(d) => setVideoDuration(scene.index, d)}
+                  badge={scene.index === 1 ? 'Bắt buộc' : 'Tuỳ chọn'} />
+              ))}
+            </div>
+          </div>
+
+          {/* Toggle which uploaded "tay tự nhiên" variants the auto-sequencer may use */}
+          {uploadedVariants.length > 1 && (
+            <div>
+              <label className="text-xs font-medium text-(--color-secondary) block mb-1.5">
+                Biến thể &quot;tay tự nhiên&quot; dùng trong auto-sequence
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {uploadedVariants.map((idx) => {
+                  const scene = SCENES.find((s) => s.index === idx)!;
+                  const checked = activeVariants.has(idx);
+                  return (
+                    <label key={idx}
+                      className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${checked ? 'border-(--color-primary) bg-(--color-primary-light) text-(--color-foreground)' : 'border-(--color-border) text-(--color-secondary)'}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleVariant(idx)} className="accent-(--color-primary)" />
+                      {scene.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Audio */}
@@ -546,11 +658,12 @@ export default function DevPage() {
   );
 }
 
-function VideoSlot({ scene, onFile, onDuration }: {
+function VideoSlot({ scene, onFile, onDuration, badge }: {
   scene: typeof SCENES[number];
   file: File | null;
   onFile: (f: File) => void;
   onDuration: (duration: number) => void;
+  badge?: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -573,6 +686,7 @@ function VideoSlot({ scene, onFile, onDuration }: {
     <div className="block-section">
       <div className="block-header">
         <span className="block-title">{scene.label}</span>
+        {badge && <span className="text-[10px] text-(--color-secondary) ml-1.5 px-1.5 py-0.5 rounded bg-(--color-muted)">{badge}</span>}
         {clipDuration !== null && <span className="text-xs text-(--color-secondary) ml-2">{clipDuration.toFixed(2)}s</span>}
         <div className="block-divider" />
       </div>

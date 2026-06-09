@@ -10,6 +10,7 @@ export interface SceneResult {
   jobId?: string;
   frampackUrl?: string;
   error?: string;
+  elapsedMs?: number; // wall-clock time from job submit to done — for comparing step counts etc.
 }
 
 export interface PoseStageConfig {
@@ -37,6 +38,7 @@ export interface SceneConfig {
   hasArm: boolean;
   useEndImage: boolean;
   poseConfig?: PoseConfig;
+  variantGroup?: string; // scenes sharing this tag are interchangeable variants of one gesture
 }
 
 export type StageKey = 'into' | 'hold' | 'out';
@@ -86,7 +88,7 @@ export interface GeneratePosedVideoRequest {
 export type SSEEvent =
   | { type: 'scene-start'; sceneIndex: number; label: string }
   | { type: 'scene-progress'; sceneIndex: number; pct: number }
-  | { type: 'scene-done'; sceneIndex: number; jobId: string; frampackUrl: string }
+  | { type: 'scene-done'; sceneIndex: number; jobId: string; frampackUrl: string; elapsedMs: number }
   | { type: 'scene-error'; sceneIndex: number; error: string }
   | { type: 'all-done' }
   | { type: 'error'; message: string };
